@@ -57,20 +57,19 @@ Developers often run multiple concurrent services (e.g., a Next.js frontend, a F
 *   **Complex Networking:** No advanced firewall or routing rules.
 
 ## 7. MVP Scope
-The Minimum Viable Product will include:
-1.  **Backend:** A Node.js/Express server to handle system-level process scanning and port mapping.
+The Minimum Viable Product includes:
+1.  **Backend:** A FastAPI local agent using `psutil` for system-level process scanning and port mapping.
 2.  **Frontend:** A React (Vite) dashboard displaying a list of filtered processes.
-3.  **Core Logic:** Detection of `node` and `python` processes + Port mapping.
-4.  **Action:** "Kill" button functionality.
-5.  **Real-time:** Basic polling (every 2-3 seconds) for resource updates.
+3.  **Core Logic:** Detection of dev-oriented `node`, `npm`, `vite`, `next`, `python`, `uvicorn`, and `fastapi` processes + port mapping.
+4.  **Action:** Confirmed stop action that sends `SIGTERM` only.
+5.  **Real-time:** Basic polling every 2 seconds for resource updates.
 
 ## 8. Data Model
-Since the app is primarily a "view" of the OS, a persistent database is not strictly required for the MVP, but **SQLite** will be used for historical logging.
+Since the app is primarily a "view" of the OS, a persistent database is not required for the MVP. Historical logging and SQLite are deferred.
 
 ### Process Object (In-Memory / API Response)
 ```json
 {
-  "id": "uuid",
   "pid": 1234,
   "name": "Next.js Dev Server",
   "command": "npm run dev",
@@ -78,30 +77,20 @@ Since the app is primarily a "view" of the OS, a persistent database is not stri
   "ports": [3000],
   "cpu_usage": 12.5,
   "memory_mb": 256.0,
-  "uptime": "00:15:30",
+  "uptime_seconds": 930,
   "status": "running"
 }
 ```
-
-### Historical Logs (SQLite)
-*   **Table: `usage_history`**
-    *   `id`: Primary Key
-    *   `timestamp`: DateTime
-    *   `process_name`: String
-    *   `cpu_avg`: Float
-    *   `mem_avg`: Float
 
 ## 9. API Plan (Internal)
 
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
+| `/api/health` | GET | Returns backend health status. |
 | `/api/processes` | GET | Returns a list of filtered dev processes and their ports. |
-| `/api/processes/:pid/kill` | POST | Sends termination signal to the specified PID. |
-| `/api/stats` | GET | Returns aggregate system stats (Total RAM/CPU used by dev apps). |
-| `/api/logs` | GET | Returns historical resource usage (optional for V1.1). |
+| `/api/processes/{pid}/kill` | POST | Sends `SIGTERM` to the specified PID. |
 
-**Websocket Path:** `/ws`
-*   Events: `process_update` (pushes new CPU/RAM metrics every 2s).
+WebSockets, historical logs, and a separate stats endpoint are deferred.
 
 ## 10. Risks & Mitigations
 

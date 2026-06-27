@@ -2,13 +2,33 @@ This implementation plan outlines the development of **Server-View**, a system-l
 
 ## Project Overview: Server-View
 **Goal:** A real-time dashboard to monitor, visualize, and manage local development processes.
-**Architecture:** Since web browsers cannot access system processes directly for security reasons, the architecture will consist of a **Local Agent** (Node.js) and a **Web Dashboard** (Next.js).
+**Architecture:** Since web browsers cannot access system processes directly for security reasons, the architecture consists of a **Local Agent** (FastAPI + psutil) and a **Web Dashboard** (React + Vite).
 
 ---
 
 ## 🏗 High-Level Architecture
-1.  **Local Agent (Backend):** A lightweight Node.js service running on the user's machine. It scans processes, maps ports, and exposes a WebSocket/REST API.
-2.  **Web Dashboard (Frontend):** A React-based UI that connects to the Local Agent to display data and send "Kill" commands.
+1.  **Local Agent (Backend):** A lightweight FastAPI service running on the user's machine. It scans processes, maps ports, and exposes a local REST API.
+2.  **Web Dashboard (Frontend):** A React-based UI that connects to the Local Agent to display data and send confirmed `SIGTERM` stop requests.
+
+---
+
+## Implemented MVP
+
+- Backend package in `backend/` managed by `uv`.
+- Frontend package in `frontend/` managed by `npm`.
+- REST endpoints:
+  - `GET /api/health`
+  - `GET /api/processes`
+  - `POST /api/processes/{pid}/kill`
+- Dashboard summary metrics, search/filter, process table, empty/error/loading states, manual refresh, 2-second polling, and stop confirmation dialog.
+- Automated backend and frontend tests for the MVP behavior.
+
+Run commands:
+
+```bash
+cd backend && uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+cd frontend && npm run dev
+```
 
 ---
 
