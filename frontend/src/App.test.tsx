@@ -106,6 +106,58 @@ describe('App', () => {
     expect(screen.queryByText('uvicorn app.main:app')).not.toBeInTheDocument();
   });
 
+  test('groups processes by project, collapses helpers, and flags port conflicts', async () => {
+    const user = userEvent.setup();
+    const groupedResponse: ProcessListResponse = {
+      processes: [
+        {
+          pid: 101,
+          name: 'node',
+          command: 'npm run dev',
+          cwd: '/work/app',
+          ports: [3000],
+          cpu_usage: 1.2,
+          memory_mb: 128,
+          uptime_seconds: 60,
+          status: 'running',
+          group_key: '/work/app',
+          is_primary: true,
+        },
+        {
+          pid: 102,
+          name: 'node',
+          command: 'node esbuild-service',
+          cwd: '/work/app',
+          ports: [],
+          cpu_usage: 0.1,
+          memory_mb: 12,
+          uptime_seconds: 60,
+          status: 'running',
+          group_key: '/work/app',
+          is_primary: false,
+        },
+      ],
+      groups: [],
+      port_conflicts: [{ port: 3000, pids: [101, 999] }],
+      summary: { process_count: 2, total_memory_mb: 140, active_ports: [3000] },
+    };
+    mockFetch(groupedResponse);
+
+    render(<App />);
+
+    // Conflict surfaces in the banner and a group badge.
+    expect(await screen.findByText('Port 3000 claimed by 2 processes')).toBeInTheDocument();
+    expect(screen.getByText('Port conflict')).toBeInTheDocument();
+
+    // Primary command shows; the helper is collapsed by default.
+    expect(screen.getByText('npm run dev')).toBeInTheDocument();
+    expect(screen.queryByText('node esbuild-service')).not.toBeInTheDocument();
+
+    // Expanding the group reveals the helper.
+    await user.click(screen.getByRole('button', { name: /Expand app helper processes/i }));
+    expect(screen.getByText('node esbuild-service')).toBeInTheDocument();
+  });
+
   test('opens confirmation before stop and calls kill only after confirm', async () => {
     const user = userEvent.setup();
     const fetchMock = vi
