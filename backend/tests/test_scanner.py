@@ -6,7 +6,30 @@ from types import SimpleNamespace
 import psutil
 import pytest
 
-from app.scanner import is_dev_process, listening_ports_by_pid, process_to_info, terminate_process
+from app.models import ProcessInfo
+from app.scanner import (
+    build_groups,
+    detect_port_conflicts,
+    is_dev_process,
+    listening_ports_by_pid,
+    process_to_info,
+    select_primary_pid,
+    terminate_process,
+)
+
+
+def make_info(pid: int, *, cwd: str | None, ports: list[int] | None = None, memory_mb: float = 1.0) -> ProcessInfo:
+    return ProcessInfo(
+        pid=pid,
+        name="node",
+        command="npm run dev",
+        cwd=cwd,
+        ports=ports or [],
+        cpu_usage=0.0,
+        memory_mb=memory_mb,
+        uptime_seconds=0,
+        status="running",
+    )
 
 
 class FakeProcess:
@@ -110,6 +133,58 @@ def test_listening_ports_by_pid_maps_listening_ports_only() -> None:
     ]
 
     assert listening_ports_by_pid(connections) == {10: [5173, 8000]}
+
+
+def test_build_groups_clusters_by_cwd_and_tags_members() -> None:
+    server = make_info(1, cwd="/work/app", ports=[5173], memory_mb=120.0)
+    helper = make_info(2, cwd="/work/app", memory_mb=8.0)
+    other = make_info(3, cwd="/work/api", ports=[8000], memory_mb=64.0)
+    processes = [server, helper, other]
+
+    groups = build_groups(processes)
+
+    assert [group.label for group in groups] == ["api", "app"]
+    app_group = next(group for group in groups if group.key == "/work/app")
+    assert app_group.pids == [1, 2]
+    assert app_group.ports == [5173]
+    assert app_group.primary_pid == 1
+    assert app_group.process_count == 2
+    assert app_group.total_memory_mb == 128.0
+    # Port owner and the helper are tagged distinctly on the shared list.
+    assert server.is_primary is True
+    assert helper.is_primary is False
+    assert helper.group_key == "/work/app"
+
+
+def test_build_groups_keeps_cwdless_processes_separate() -> None:
+    a = make_info(10, cwd=None)
+    b = make_info(11, cwd=None)
+
+    groups = build_groups([a, b])
+
+    assert len(groups) == 2
+    assert {group.key for group in groups} == {"pid:10", "pid:11"}
+    assert all(group.project_path is None and group.label == "Ungrouped" for group in groups)
+
+
+def test_select_primary_prefers_port_owner_then_heaviest() -> None:
+    owner = make_info(1, cwd="/p", ports=[8080], memory_mb=5.0)
+    heavy = make_info(2, cwd="/p", memory_mb=200.0)
+
+    assert select_primary_pid([owner, heavy]) == 1
+    assert select_primary_pid([heavy]) == 2
+    assert select_primary_pid([]) is None
+
+
+def test_detect_port_conflicts_flags_shared_ports_only() -> None:
+    a = make_info(1, cwd="/a", ports=[3000, 5173])
+    b = make_info(2, cwd="/b", ports=[3000])
+
+    conflicts = detect_port_conflicts([a, b])
+
+    assert len(conflicts) == 1
+    assert conflicts[0].port == 3000
+    assert conflicts[0].pids == [1, 2]
 
 
 def test_terminate_process_reports_missing_pid(monkeypatch: pytest.MonkeyPatch) -> None:

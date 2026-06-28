@@ -22,8 +22,7 @@ async def health() -> HealthResponse:
 
 @app.get("/api/processes", response_model=ProcessListResponse)
 async def processes() -> ProcessListResponse:
-    process_list, summary = scan_processes()
-    return ProcessListResponse(processes=process_list, summary=summary)
+    return scan_processes()
 
 
 @app.post("/api/processes/{pid}/kill", response_model=KillResponse)

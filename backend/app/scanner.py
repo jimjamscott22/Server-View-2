@@ -8,7 +8,7 @@ from pathlib import PurePath
 
 import psutil
 
-from app.models import ProcessInfo, ProcessSummary
+from app.models import PortConflict, ProcessGroup, ProcessInfo, ProcessListResponse, ProcessSummary
 
 
 DEV_PROCESS_KEYWORDS = (
@@ -140,7 +140,89 @@ def process_to_info(process: psutil.Process, ports: list[int], now: float | None
     return info if has_dev_server_evidence(info) else None
 
 
-def scan_processes() -> tuple[list[ProcessInfo], ProcessSummary]:
+def project_label(path: str | None) -> str:
+    if not path:
+        return "Ungrouped"
+    return PurePath(path).name or path
+
+
+def group_key_for(info: ProcessInfo) -> str:
+    """Stable group identity: the working directory when known, otherwise a
+    per-PID key so a process with no cwd stands alone instead of pooling with
+    unrelated cwd-less processes."""
+    if info.cwd:
+        return info.cwd
+    return f"pid:{info.pid}"
+
+
+def select_primary_pid(members: list[ProcessInfo]) -> int | None:
+    """Pick the process that best represents a project group. A port owner is
+    the real dev server; with several, the lowest port wins. With no port
+    owner, the heaviest process is the runtime rather than a thin wrapper."""
+    if not members:
+        return None
+    port_owners = [member for member in members if member.ports]
+    if port_owners:
+        return min(port_owners, key=lambda member: (min(member.ports), member.pid)).pid
+    return max(members, key=lambda member: (member.memory_mb, member.pid)).pid
+
+
+def build_groups(processes: list[ProcessInfo]) -> list[ProcessGroup]:
+    """Group processes by working directory and tag each member's
+    ``group_key``/``is_primary`` in place. A member is primary if it owns a
+    listening port or is the group's chosen representative; everything else is
+    a helper a project view can collapse."""
+    members_by_key: dict[str, list[ProcessInfo]] = {}
+    order: list[str] = []
+    for info in processes:
+        key = group_key_for(info)
+        info.group_key = key
+        if key not in members_by_key:
+            members_by_key[key] = []
+            order.append(key)
+        members_by_key[key].append(info)
+
+    groups: list[ProcessGroup] = []
+    for key in order:
+        members = members_by_key[key]
+        primary_pid = select_primary_pid(members)
+        for member in members:
+            member.is_primary = bool(member.ports) or member.pid == primary_pid
+        project_path = members[0].cwd
+        groups.append(
+            ProcessGroup(
+                key=key,
+                project_path=project_path,
+                label=project_label(project_path),
+                pids=[member.pid for member in members],
+                ports=sorted({port for member in members for port in member.ports}),
+                process_count=len(members),
+                total_memory_mb=round(sum(member.memory_mb for member in members), 1),
+                primary_pid=primary_pid,
+            )
+        )
+
+    # Named projects first (alphabetical), then cwd-less singletons.
+    groups.sort(key=lambda group: (group.project_path is None, group.label.lower(), group.key))
+    return groups
+
+
+def detect_port_conflicts(processes: list[ProcessInfo]) -> list[PortConflict]:
+    """A conflict is one listening port claimed by more than one process."""
+    pids_by_port: dict[int, list[int]] = {}
+    for info in processes:
+        for port in info.ports:
+            owners = pids_by_port.setdefault(port, [])
+            if info.pid not in owners:
+                owners.append(info.pid)
+    return [
+        PortConflict(port=port, pids=sorted(pids))
+        for port, pids in sorted(pids_by_port.items())
+        if len(pids) > 1
+    ]
+
+
+def scan_processes() -> ProcessListResponse:
     ports_by_pid = listening_ports_by_pid()
     processes: list[ProcessInfo] = []
     now = time.time()
@@ -151,14 +233,23 @@ def scan_processes() -> tuple[list[ProcessInfo], ProcessSummary]:
             processes.append(info)
 
     processes.sort(key=lambda item: (item.name.lower(), item.pid))
+    groups = build_groups(processes)
+    port_conflicts = detect_port_conflicts(processes)
     active_ports = sorted({port for process in processes for port in process.ports})
     total_memory_mb = round(sum(process.memory_mb for process in processes), 1)
     summary = ProcessSummary(
         process_count=len(processes),
         total_memory_mb=total_memory_mb,
         active_ports=active_ports,
+        group_count=len(groups),
+        conflict_count=len(port_conflicts),
     )
-    return processes, summary
+    return ProcessListResponse(
+        processes=processes,
+        groups=groups,
+        port_conflicts=port_conflicts,
+        summary=summary,
+    )
 
 
 def terminate_process(pid: int) -> None:

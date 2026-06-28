@@ -2,7 +2,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app import main
-from app.models import ProcessInfo, ProcessSummary
+from app.models import ProcessInfo, ProcessListResponse, ProcessSummary
 from app.scanner import ProcessAccessDenied, ProcessNotFound
 
 
@@ -28,7 +28,7 @@ async def test_health_response() -> None:
 
 
 async def test_processes_response_shape(monkeypatch) -> None:
-    def fake_scan_processes() -> tuple[list[ProcessInfo], ProcessSummary]:
+    def fake_scan_processes() -> ProcessListResponse:
         processes = [
             ProcessInfo(
                 pid=123,
@@ -43,7 +43,7 @@ async def test_processes_response_shape(monkeypatch) -> None:
             )
         ]
         summary = ProcessSummary(process_count=1, total_memory_mb=64.0, active_ports=[5173])
-        return processes, summary
+        return ProcessListResponse(processes=processes, summary=summary)
 
     monkeypatch.setattr(main, "scan_processes", fake_scan_processes)
 
