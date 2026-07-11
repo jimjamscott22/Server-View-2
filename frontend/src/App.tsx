@@ -13,9 +13,31 @@ const EMPTY_SUMMARY: ProcessSummary = {
 
 type Theme = 'light' | 'dark';
 type StopError = { pid: number; message: string };
+type ThemeStorage = {
+  getItem: (key: string) => string | null;
+  setItem: (key: string, value: string) => void;
+};
+
+const THEME_STORAGE_KEY = 'serverview-theme';
+
+function isThemeStorage(value: unknown): value is ThemeStorage {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'getItem' in value &&
+    'setItem' in value &&
+    typeof value.getItem === 'function' &&
+    typeof value.setItem === 'function'
+  );
+}
+
+function getThemeStorage(): ThemeStorage | null {
+  const storage = window.localStorage;
+  return isThemeStorage(storage) ? storage : null;
+}
 
 function getInitialTheme(): Theme {
-  const stored = window.localStorage?.getItem('serverview-theme');
+  const stored = getThemeStorage()?.getItem(THEME_STORAGE_KEY);
   if (stored === 'light' || stored === 'dark') {
     return stored;
   }
@@ -315,7 +337,7 @@ function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    window.localStorage?.setItem('serverview-theme', theme);
+    getThemeStorage()?.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
   const loadProcesses = useCallback(async (signal?: AbortSignal, quiet = false) => {
