@@ -20,6 +20,10 @@ No runnable app scaffold or package manifest exists yet, so there are no verifie
 
 Do not document commands until they are present and verified in the repo.
 
+The backend runs on port `8008` and the frontend on port `5178` (non-default ports, chosen to avoid clashing with other local FastAPI/Vite/Next.js apps). See `README.md` for the full commands.
+
+`start.sh` (Linux/macOS) and `start.bat` (Windows) at the repo root launch both servers together and open the dashboard in the browser.
+
 ## Coding Style & Naming Conventions
 Prefer clear module boundaries: process discovery, port mapping, resource sampling, API routes, and UI components should remain separate. Use descriptive names such as `processScanner`, `portMapper`, `ProcessTable`, and `KillProcessDialog`.
 
