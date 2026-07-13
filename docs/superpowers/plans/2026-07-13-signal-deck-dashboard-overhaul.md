@@ -78,14 +78,15 @@ Expected: FAIL because the three navigation links do not exist and the existing 
 Run from `frontend/`:
 
 ```bash
-npm install lucide-react@0.547.0 @fontsource-variable/manrope @fontsource-variable/barlow-condensed @fontsource-variable/jetbrains-mono
+npm install lucide-react@0.547.0 @fontsource-variable/manrope@5.2.8 @fontsource/barlow-condensed@5.2.8 @fontsource-variable/jetbrains-mono@5.2.8
 ```
 
 Import the local font CSS before the app stylesheet in `frontend/src/main.tsx`:
 
 ```tsx
 import '@fontsource-variable/manrope/wght.css';
-import '@fontsource-variable/barlow-condensed/wght.css';
+import '@fontsource/barlow-condensed/600.css';
+import '@fontsource/barlow-condensed/700.css';
 import '@fontsource-variable/jetbrains-mono/wght.css';
 ```
 
