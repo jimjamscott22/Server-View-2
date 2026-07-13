@@ -42,25 +42,31 @@ function Ports({ ports, conflictPorts }: { ports: number[]; conflictPorts: Set<n
 function ProcessRow({
   process,
   isChild,
+  isSelected,
   conflictPorts,
   stopError,
   onStop,
 }: {
   process: ProcessInfo;
   isChild: boolean;
+  isSelected: boolean;
   conflictPorts: Set<number>;
   stopError: StopError | null;
   onStop: (process: ProcessInfo) => void;
 }) {
   const isRestricted = !process.command && !process.cwd;
   const failedStop = stopError?.pid === process.pid ? stopError : null;
-  const rowClass = [isChild ? 'row-child' : '', isRestricted ? 'row-restricted' : '']
+  const rowClass = [
+    isChild ? 'row-child' : '',
+    isRestricted ? 'row-restricted' : '',
+    isSelected ? 'row-selected' : '',
+  ]
     .filter(Boolean)
     .join(' ');
 
   return (
     <tr className={rowClass || undefined}>
-      <td>
+      <td className="process-cell">
         <div className="process-name">{process.name}</div>
         <div className="process-meta">PID {process.pid}</div>
         <code>{process.command || 'Command unavailable'}</code>
@@ -69,11 +75,11 @@ function ProcessRow({
         )}
         {isRestricted ? <span className="tag-restricted">Limited access</span> : null}
       </td>
-      <td data-label="Ports"><Ports ports={process.ports} conflictPorts={conflictPorts} /></td>
-      <td className="num" data-label="CPU">{process.cpu_usage.toFixed(1)}%</td>
-      <td className="num" data-label="Memory">{process.memory_mb.toFixed(1)} MB</td>
-      <td className="num" data-label="Uptime">{formatUptime(process.uptime_seconds)}</td>
-      <td data-label="Status"><span className={statusClass(process.status)}>{process.status}</span></td>
+      <td className="ports-cell" data-label="Ports"><Ports ports={process.ports} conflictPorts={conflictPorts} /></td>
+      <td className="num cpu-cell" data-label="CPU">{process.cpu_usage.toFixed(1)}%</td>
+      <td className="num memory-cell" data-label="Memory">{process.memory_mb.toFixed(1)} MB</td>
+      <td className="num uptime-cell" data-label="Uptime">{formatUptime(process.uptime_seconds)}</td>
+      <td className="status-cell" data-label="Status"><span className={statusClass(process.status)}>{process.status}</span></td>
       <td className="action-cell" data-label="Action">
         <button className="danger" type="button" onClick={() => onStop(process)}>
           Stop
@@ -137,6 +143,7 @@ export function ProcessTable({
   expandedGroups,
   onToggleGroup,
   isStale,
+  selectedPid,
   stopError,
   onStop,
 }: {
@@ -145,6 +152,7 @@ export function ProcessTable({
   expandedGroups: Set<string>;
   onToggleGroup: (key: string) => void;
   isStale: boolean;
+  selectedPid: number | null;
   stopError: StopError | null;
   onStop: (process: ProcessInfo) => void;
 }) {
@@ -172,6 +180,7 @@ export function ProcessTable({
                 <ProcessRow
                   process={group.processes[0]}
                   isChild={false}
+                  isSelected={selectedPid === group.processes[0].pid}
                   conflictPorts={conflictPorts}
                   stopError={stopError}
                   onStop={onStop}
@@ -198,6 +207,7 @@ export function ProcessTable({
                   key={process.pid}
                   process={process}
                   isChild={index >= group.primaryCount}
+                  isSelected={selectedPid === process.pid}
                   conflictPorts={conflictPorts}
                   stopError={stopError}
                   onStop={onStop}

@@ -102,6 +102,28 @@ describe('App', () => {
     expect(await screen.findByText('Error: Backend unavailable')).toBeInTheDocument();
   });
 
+  test('keeps prior rows visible and marks them stale after a refresh error', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => populatedResponse,
+      } as Response)
+      .mockRejectedValueOnce(new Error('Backend unavailable'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+
+    const process = await screen.findByText('npm run dev');
+    await user.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    expect(await screen.findByText('Error: Backend unavailable')).toBeInTheDocument();
+    expect(process).toBeInTheDocument();
+    expect(screen.getByText('Stale data')).toHaveAttribute('data-state', 'stale');
+    expect(process.closest('.table-wrap')).toHaveClass('is-stale');
+  });
+
   test('renders populated table and filters by port and cwd', async () => {
     const user = userEvent.setup();
     mockFetch(populatedResponse);
@@ -113,9 +135,13 @@ describe('App', () => {
     expect(screen.getByText('212.6 MB')).toBeInTheDocument();
 
     const processRow = screen.getByText('npm run dev').closest('tr') as HTMLElement;
-    expect(within(processRow).getByText('5173').closest('td')).toHaveAttribute('data-label', 'Ports');
-    expect(within(processRow).getByText('1.2%').closest('td')).toHaveAttribute('data-label', 'CPU');
-    expect(within(processRow).getByText('running').closest('td')).toHaveAttribute('data-label', 'Status');
+    expect(within(processRow).getByText('npm run dev').closest('td')).toHaveClass('process-cell');
+    expect(within(processRow).getByText('5173').closest('td')).toHaveClass('ports-cell');
+    expect(within(processRow).getByText('1.2%').closest('td')).toHaveClass('cpu-cell');
+    expect(within(processRow).getByText('128.4 MB').closest('td')).toHaveClass('memory-cell');
+    expect(within(processRow).getByText('1m 5s').closest('td')).toHaveClass('uptime-cell');
+    expect(within(processRow).getByText('running').closest('td')).toHaveClass('status-cell');
+    expect(within(processRow).getByRole('button', { name: 'Stop' }).closest('td')).toHaveClass('action-cell');
 
     await user.type(screen.getByLabelText('Search'), 'uvicorn');
 
@@ -212,6 +238,26 @@ describe('App', () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith('/api/processes/101/kill', { method: 'POST' });
     });
+  });
+
+  test('marks the process row selected while its stop dialog is open', async () => {
+    const user = userEvent.setup();
+    mockFetch(populatedResponse);
+
+    render(<App />);
+
+    const processRow = (await screen.findByText('npm run dev')).closest('tr') as HTMLElement;
+    expect(processRow).not.toHaveClass('row-selected');
+
+    await user.click(within(processRow).getByRole('button', { name: 'Stop' }));
+
+    expect(processRow).toHaveClass('row-selected');
+    expect(screen.getByRole('dialog', { name: 'Stop process?' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByRole('dialog', { name: 'Stop process?' })).not.toBeInTheDocument();
+    expect(processRow).not.toHaveClass('row-selected');
   });
 
   test('polls every two seconds and cleans up interval on unmount', async () => {

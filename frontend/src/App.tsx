@@ -177,7 +177,7 @@ function App() {
           {data.port_conflicts && data.port_conflicts.length > 0 ? <div className="conflict-banner" role="status">{data.port_conflicts.map((conflict) => `Port ${conflict.port} claimed by ${conflict.pids.length} processes`).join(' · ')}</div> : null}
           {isLoading ? <div className="state">Loading processes...</div> : null}
           {!isLoading && visibleProcesses.length === 0 ? <div className="state">{query ? 'No processes match the current filter.' : 'No development processes detected.'}</div> : null}
-          {!isLoading && visibleProcesses.length > 0 ? <ProcessTable groups={groups} conflictPorts={conflictPorts} expandedGroups={expandedGroups} onToggleGroup={toggleGroup} isStale={isStale} stopError={stopError} onStop={(process) => { setStopError(null); setSelectedProcess(process); }} /> : null}
+          {!isLoading && visibleProcesses.length > 0 ? <ProcessTable groups={groups} conflictPorts={conflictPorts} expandedGroups={expandedGroups} onToggleGroup={toggleGroup} isStale={isStale} selectedPid={selectedProcess?.pid ?? null} stopError={stopError} onStop={(process) => { setStopError(null); setSelectedProcess(process); }} /> : null}
         </section>
         {selectedProcess ? <ConfirmStopDialog process={selectedProcess} isStopping={isStopping} error={stopError?.pid === selectedProcess.pid ? stopError.message : null} onCancel={() => setSelectedProcess(null)} onConfirm={() => void handleConfirmStop()} /> : null}
       </main>
