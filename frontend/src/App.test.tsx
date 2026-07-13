@@ -112,6 +112,11 @@ describe('App', () => {
     expect(screen.getByText('uvicorn app.main:app')).toBeInTheDocument();
     expect(screen.getByText('212.6 MB')).toBeInTheDocument();
 
+    const processRow = screen.getByText('npm run dev').closest('tr') as HTMLElement;
+    expect(within(processRow).getByText('5173').closest('td')).toHaveAttribute('data-label', 'Ports');
+    expect(within(processRow).getByText('1.2%').closest('td')).toHaveAttribute('data-label', 'CPU');
+    expect(within(processRow).getByText('running').closest('td')).toHaveAttribute('data-label', 'Status');
+
     await user.type(screen.getByLabelText('Search'), 'uvicorn');
 
     expect(screen.queryByText('npm run dev')).not.toBeInTheDocument();
