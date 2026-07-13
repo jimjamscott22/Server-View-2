@@ -67,6 +67,24 @@ afterEach(() => {
 });
 
 describe('App', () => {
+  test('renders functional navigation and labels the current theme', async () => {
+    const user = userEvent.setup();
+    mockFetch(emptyResponse);
+
+    render(<App />);
+    await screen.findByText('No development processes detected.');
+
+    expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('href', '#overview');
+    expect(screen.getByRole('link', { name: 'Processes' })).toHaveAttribute('href', '#processes');
+    expect(screen.getByRole('link', { name: 'Ports' })).toHaveAttribute('href', '#ports');
+
+    const themeButton = screen.getByRole('button', { name: 'Light theme' });
+    await user.click(themeButton);
+
+    expect(screen.getByRole('button', { name: 'Dark theme' })).toBeInTheDocument();
+    expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+  });
+
   test('renders loading and then empty state', async () => {
     mockFetch(emptyResponse);
 

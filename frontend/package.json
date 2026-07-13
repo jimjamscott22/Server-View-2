@@ -10,6 +10,10 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "@fontsource-variable/manrope": "^5.2.8",
+    "@fontsource/barlow-condensed": "^5.2.8",
+    "lucide-react": "^0.547.0",
     "react": "^19.2.1",
     "react-dom": "^19.2.1"
   },
