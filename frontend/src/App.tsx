@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { fetchProcesses, killProcess } from './api';
+import { connectWebSocket, disconnectWebSocket, fetchProcesses, isWebSocketConnected, killProcess } from './api';
 import {
   AppNavigation,
   DashboardHeader,
@@ -62,6 +62,7 @@ function App() {
   const [stopError, setStopError] = useState<StopError | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const [wsConnected, setWsConnected] = useState(false);
 
   const toggleGroup = useCallback((key: string) => {
     setExpandedGroups((current) => {
@@ -79,6 +80,58 @@ function App() {
     document.documentElement.dataset.theme = theme;
     getThemeStorage()?.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
+
+  // Initialize WebSocket connection and fetch initial data
+  useEffect(() => {
+    let ignore = false;
+    
+    // Connect to WebSocket for real-time updates
+    connectWebSocket(
+      (newData: ProcessListResponse) => {
+        if (!ignore) {
+          setData(newData);
+          setError(null);
+          setIsLoading(false);
+          setWsConnected(true);
+        }
+      },
+      (err: Error) => {
+        if (!ignore) {
+          setError(err.message);
+          setWsConnected(false);
+        }
+      },
+      () => {
+        if (!ignore) {
+          setWsConnected(false);
+        }
+      }
+    );
+
+    // Fetch initial data immediately (fallback if WebSocket is slow to connect)
+    const fetchInitialData = async () => {
+      try {
+        const response = await fetchProcesses();
+        if (!ignore) {
+          setData(response);
+          setError(null);
+          setIsLoading(false);
+        }
+      } catch (caught) {
+        if (!ignore) {
+          setError(caught instanceof Error ? caught.message : 'Unable to load processes');
+          setIsLoading(false);
+        }
+      }
+    };
+    
+    void fetchInitialData();
+
+    return () => {
+      ignore = true;
+      disconnectWebSocket();
+    };
+  }, []);
 
   const loadProcesses = useCallback(async (signal?: AbortSignal, quiet = false) => {
     if (!quiet) {
@@ -100,28 +153,6 @@ function App() {
     }
   }, []);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    let ignore = false;
-
-    async function poll(quiet = false) {
-      if (!ignore) {
-        await loadProcesses(controller.signal, quiet);
-      }
-    }
-
-    void poll(true);
-    const intervalId = window.setInterval(() => {
-      void poll(true);
-    }, 2000);
-
-    return () => {
-      ignore = true;
-      controller.abort();
-      window.clearInterval(intervalId);
-    };
-  }, [loadProcesses]);
-
   const visibleProcesses = useMemo(() => filterProcesses(data.processes, query), [data.processes, query]);
   const groups = useMemo(() => buildRenderGroups(visibleProcesses), [visibleProcesses]);
   const conflictPorts = useMemo(
@@ -131,8 +162,10 @@ function App() {
 
   const hasData = data.processes.length > 0;
   const isStale = Boolean(error) && hasData;
-  const statusState = isStale ? 'stale' : isRefreshing ? 'refreshing' : 'live';
-  const statusLabel = isStale ? 'Stale data' : isRefreshing ? 'Refreshing' : 'Live';
+  
+  // Status is live if WebSocket is connected, refreshing if manually refreshing, stale if error
+  const statusState = wsConnected ? 'live' : isRefreshing ? 'refreshing' : isStale ? 'stale' : 'live';
+  const statusLabel = wsConnected ? 'Live (WebSocket)' : isRefreshing ? 'Refreshing' : isStale ? 'Stale data' : 'Live';
 
   async function handleConfirmStop() {
     if (!selectedProcess) {
@@ -145,7 +178,7 @@ function App() {
     try {
       await killProcess(target.pid);
       setSelectedProcess(null);
-      await loadProcesses(undefined, true);
+      // Data will be updated via WebSocket automatically
     } catch (caught) {
       setStopError({
         pid: target.pid,
@@ -174,7 +207,8 @@ function App() {
         <section id="processes" className="process-section" aria-label="Processes">
           <ProcessToolbar query={query} onQueryChange={setQuery} />
           {error ? <div className="alert">Error: {error}</div> : null}
-          {data.port_conflicts && data.port_conflicts.length > 0 ? <div className="conflict-banner" role="status">{data.port_conflicts.map((conflict) => `Port ${conflict.port} claimed by ${conflict.pids.length} processes`).join(' · ')}</div> : null}
+          {!wsConnected ? <div className="alert info">Using fallback polling. WebSocket will reconnect automatically.</div> : null}
+          {data.port_conflicts && data.port_conflicts.length > 0 ? <div className="conflict-banner" role="status">{data.port_conflicts.map((conflict) => `Port ${conflict.port} claimed by ${conflict.pids.length} processes`).join(' \u00b7 ')}</div> : null}
           {isLoading ? <div className="state">Loading processes...</div> : null}
           {!isLoading && visibleProcesses.length === 0 ? <div className="state">{query ? 'No processes match the current filter.' : 'No development processes detected.'}</div> : null}
           {!isLoading && visibleProcesses.length > 0 ? <ProcessTable groups={groups} conflictPorts={conflictPorts} expandedGroups={expandedGroups} onToggleGroup={toggleGroup} isStale={isStale} selectedPid={selectedProcess?.pid ?? null} stopError={stopError} onStop={(process) => { setStopError(null); setSelectedProcess(process); }} /> : null}
