@@ -13,6 +13,9 @@ export default defineConfig({
       },
     },
   },
+  define: {
+    'import.meta.env.VITE_BACKEND_PORT': JSON.stringify('8008'),
+  },
   test: {
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',

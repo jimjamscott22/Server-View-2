@@ -1,8 +1,9 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.models import HealthResponse, KillResponse, ProcessListResponse
 from app.scanner import ProcessAccessDenied, ProcessNotFound, ProcessTerminationError, scan_processes, terminate_process
+from app.websocket import websocket_health, websocket_processes
 
 app = FastAPI(title="Server-View Local Agent")
 
@@ -42,3 +43,14 @@ async def kill_process(pid: int) -> KillResponse:
         status="requested",
         message=f"SIGTERM sent to process {pid}",
     )
+
+
+# WebSocket endpoints for real-time updates
+@app.websocket("/ws/processes")
+async def ws_processes(websocket: WebSocket):
+    await websocket_processes(websocket)
+
+
+@app.websocket("/ws/health")
+async def ws_health(websocket: WebSocket):
+    await websocket_health(websocket)
