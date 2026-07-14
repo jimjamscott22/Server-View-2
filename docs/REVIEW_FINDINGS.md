@@ -302,7 +302,7 @@ Server-View-2 is a well-architected, cleanly implemented application for monitor
 
 Server-View-2 is a **well-built, production-ready MVP** that successfully addresses the core problem of monitoring local development processes. The codebase is clean, maintainable, and follows best practices. With the recommended improvements—particularly **WebSocket support** and **system tray integration**—it can evolve into a truly excellent developer tool.
 
-**Next Action:** ✅ WebSocket support implemented. Next: System tray widget
+**Next Action:** ✅ WebSocket support and system tray widget implemented
 
 ---
 
