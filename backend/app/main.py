@@ -39,9 +39,9 @@ async def kill_process(pid: int) -> KillResponse:
 
     return KillResponse(
         pid=pid,
-        signal="SIGTERM",
+        signal="terminate",
         status="requested",
-        message=f"SIGTERM sent to process {pid}",
+        message=f"Terminate requested for process {pid}",
     )
 
 

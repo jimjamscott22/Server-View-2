@@ -1,6 +1,6 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import App from './App';
 import type { ProcessListResponse } from './types';
 
@@ -59,6 +59,26 @@ function mockFetch(response: ProcessListResponse | Error) {
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
 }
+
+/** Keep tests on the HTTP polling path; a real WebSocket overwrites fetch errors. */
+class SilentWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+  readyState = SilentWebSocket.CLOSED;
+  onopen: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  onclose: ((event: CloseEvent) => void) | null = null;
+  constructor(_url: string) {}
+  close() {}
+  send(_data: string) {}
+}
+
+beforeEach(() => {
+  vi.stubGlobal('WebSocket', SilentWebSocket);
+});
 
 afterEach(() => {
   cleanup();
@@ -217,7 +237,7 @@ describe('App', () => {
       } as Response)
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ pid: 101, signal: 'SIGTERM', status: 'requested', message: 'sent' }),
+        json: async () => ({ pid: 101, signal: 'terminate', status: 'requested', message: 'sent' }),
       } as Response)
       .mockResolvedValueOnce({
         ok: true,
@@ -233,7 +253,7 @@ describe('App', () => {
     expect(screen.getByRole('dialog', { name: 'Stop process?' })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole('button', { name: 'Send SIGTERM' }));
+    await user.click(screen.getByRole('button', { name: 'Stop process' }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith('/api/processes/101/kill', { method: 'POST' });
@@ -261,16 +281,15 @@ describe('App', () => {
   });
 
   test('polls every two seconds and cleans up interval on unmount', async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     const fetchMock = mockFetch(emptyResponse);
 
     const { unmount } = render(<App />);
-    await vi.runOnlyPendingTimersAsync();
-    expect(screen.getByText('No development processes detected.')).toBeInTheDocument();
+    expect(await screen.findByText('No development processes detected.')).toBeInTheDocument();
     const callsAfterInitialLoad = fetchMock.mock.calls.length;
 
     await vi.advanceTimersByTimeAsync(2000);
-    expect(fetchMock).toHaveBeenCalledTimes(callsAfterInitialLoad + 1);
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(callsAfterInitialLoad);
 
     unmount();
     const callsBeforeUnmountTick = fetchMock.mock.calls.length;

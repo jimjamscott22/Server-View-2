@@ -66,7 +66,7 @@ async def test_kill_process_success(monkeypatch) -> None:
 
     assert response.status_code == 200
     assert called["pid"] == 123
-    assert response.json()["signal"] == "SIGTERM"
+    assert response.json()["signal"] == "terminate"
     assert response.json()["status"] == "requested"
 
 

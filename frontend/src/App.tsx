@@ -84,7 +84,8 @@ function App() {
   // Initialize WebSocket connection and fetch initial data
   useEffect(() => {
     let ignore = false;
-    
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+
     // Connect to WebSocket for real-time updates
     connectWebSocket(
       (newData: ProcessListResponse) => {
@@ -93,11 +94,15 @@ function App() {
           setError(null);
           setIsLoading(false);
           setWsConnected(true);
+          if (pollTimer !== null) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+          }
         }
       },
-      (err: Error) => {
+      (_err: Error) => {
         if (!ignore) {
-          setError(err.message);
+          // Prefer HTTP polling over surfacing transient WebSocket failures.
           setWsConnected(false);
         }
       },
@@ -124,11 +129,34 @@ function App() {
         }
       }
     };
-    
+
     void fetchInitialData();
+
+    // Poll while WebSocket is disconnected so the UI stays fresh on Windows/local setups.
+    pollTimer = setInterval(() => {
+      if (!ignore && !isWebSocketConnected()) {
+        void fetchProcesses()
+          .then((response) => {
+            if (!ignore) {
+              setData(response);
+              setError(null);
+              setIsLoading(false);
+            }
+          })
+          .catch((caught) => {
+            if (!ignore) {
+              setError(caught instanceof Error ? caught.message : 'Unable to load processes');
+              setIsLoading(false);
+            }
+          });
+      }
+    }, 2000);
 
     return () => {
       ignore = true;
+      if (pollTimer !== null) {
+        clearInterval(pollTimer);
+      }
       disconnectWebSocket();
     };
   }, []);

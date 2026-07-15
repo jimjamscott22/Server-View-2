@@ -18,7 +18,8 @@ export function ConfirmStopDialog({
       <section className="dialog" role="dialog" aria-modal="true" aria-labelledby="stop-title">
         <h2 id="stop-title">Stop process?</h2>
         <p>
-          Send <strong>SIGTERM</strong> to <strong>{process.name}</strong> with PID {process.pid}.
+          Stop <strong>{process.name}</strong> with PID {process.pid}? This sends a terminate
+          request (SIGTERM on Unix, TerminateProcess on Windows).
         </p>
         {error ? (
           <p className="dialog-error" role="alert">
@@ -30,7 +31,7 @@ export function ConfirmStopDialog({
             Cancel
           </button>
           <button className="danger" type="button" onClick={onConfirm} disabled={isStopping}>
-            {isStopping ? 'Stopping...' : 'Send SIGTERM'}
+            {isStopping ? 'Stopping...' : 'Stop process'}
           </button>
         </div>
       </section>
