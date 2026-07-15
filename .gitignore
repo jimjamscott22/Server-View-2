@@ -198,3 +198,4 @@ node_modules/
 frontend/dist/
 frontend/.vite/
 *.tsbuildinfo
+/frontend/node_modules
