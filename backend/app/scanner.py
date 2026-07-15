@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import signal
+import os
 import shlex
 import time
 from collections.abc import Iterable
@@ -26,6 +26,7 @@ NODE_DEV_TOOL_NAMES = {"npm", "npx", "pnpm", "yarn", "bun", "vite", "next"}
 PYTHON_RUNTIME_NAMES = {"python", "python3", "uvicorn", "fastapi"}
 PYTHON_DEV_HINTS = {"uvicorn", "fastapi", "manage.py", "flask", "django"}
 EXCLUDED_PROCESS_NAMES = {"bwrap", "codex-linux-sandbox"}
+WINDOWS_EXECUTABLE_SUFFIXES = (".exe", ".bat", ".cmd", ".com")
 
 
 class ProcessAccessDenied(Exception):
@@ -37,7 +38,7 @@ class ProcessNotFound(Exception):
 
 
 class ProcessTerminationError(Exception):
-    """Raised when a process exists but SIGTERM could not be sent."""
+    """Raised when a process exists but could not be terminated."""
 
 
 def command_to_text(command: list[str] | tuple[str, ...] | str | None) -> str:
@@ -49,6 +50,9 @@ def command_to_text(command: list[str] | tuple[str, ...] | str | None) -> str:
 
 
 def command_tokens(command: str) -> list[str]:
+    # POSIX shlex mishandles Windows paths with backslashes (e.g. C:\Users\...).
+    if os.name == "nt":
+        return command.split()
     try:
         return shlex.split(command)
     except ValueError:
@@ -56,7 +60,11 @@ def command_tokens(command: str) -> list[str]:
 
 
 def executable_name(token: str) -> str:
-    return PurePath(token).name.lower()
+    name = PurePath(token).name.lower()
+    for suffix in WINDOWS_EXECUTABLE_SUFFIXES:
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
 
 
 def is_dev_process(name: str, command: str) -> bool:
@@ -259,7 +267,8 @@ def terminate_process(pid: int) -> None:
         raise ProcessNotFound(f"Process {pid} was not found") from exc
 
     try:
-        process.send_signal(signal.SIGTERM)
+        # terminate() is SIGTERM on Unix and TerminateProcess on Windows.
+        process.terminate()
     except psutil.NoSuchProcess as exc:
         raise ProcessNotFound(f"Process {pid} was not found") from exc
     except (psutil.AccessDenied, PermissionError) as exc:

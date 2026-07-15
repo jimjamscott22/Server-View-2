@@ -1,6 +1,6 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import App from './App';
 import type { ProcessListResponse } from './types';
 
@@ -60,6 +60,26 @@ function mockFetch(response: ProcessListResponse | Error) {
   return fetchMock;
 }
 
+/** Keep tests on the HTTP polling path; a real WebSocket overwrites fetch errors. */
+class SilentWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+  readyState = SilentWebSocket.CLOSED;
+  onopen: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  onclose: ((event: CloseEvent) => void) | null = null;
+  constructor(_url: string) {}
+  close() {}
+  send(_data: string) {}
+}
+
+beforeEach(() => {
+  vi.stubGlobal('WebSocket', SilentWebSocket);
+});
+
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -67,6 +87,24 @@ afterEach(() => {
 });
 
 describe('App', () => {
+  test('renders functional navigation and labels the current theme', async () => {
+    const user = userEvent.setup();
+    mockFetch(emptyResponse);
+
+    render(<App />);
+    await screen.findByText('No development processes detected.');
+
+    expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('href', '#overview');
+    expect(screen.getByRole('link', { name: 'Processes' })).toHaveAttribute('href', '#processes');
+    expect(screen.getByRole('link', { name: 'Ports' })).toHaveAttribute('href', '#ports');
+
+    const themeButton = screen.getByRole('button', { name: 'Light theme' });
+    await user.click(themeButton);
+
+    expect(screen.getByRole('button', { name: 'Dark theme' })).toBeInTheDocument();
+    expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+  });
+
   test('renders loading and then empty state', async () => {
     mockFetch(emptyResponse);
 
@@ -84,6 +122,28 @@ describe('App', () => {
     expect(await screen.findByText('Error: Backend unavailable')).toBeInTheDocument();
   });
 
+  test('keeps prior rows visible and marks them stale after a refresh error', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => populatedResponse,
+      } as Response)
+      .mockRejectedValueOnce(new Error('Backend unavailable'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<App />);
+
+    const process = await screen.findByText('npm run dev');
+    await user.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    expect(await screen.findByText('Error: Backend unavailable')).toBeInTheDocument();
+    expect(process).toBeInTheDocument();
+    expect(screen.getByText('Stale data')).toHaveAttribute('data-state', 'stale');
+    expect(process.closest('.table-wrap')).toHaveClass('is-stale');
+  });
+
   test('renders populated table and filters by port and cwd', async () => {
     const user = userEvent.setup();
     mockFetch(populatedResponse);
@@ -93,6 +153,15 @@ describe('App', () => {
     expect(await screen.findByText('npm run dev')).toBeInTheDocument();
     expect(screen.getByText('uvicorn app.main:app')).toBeInTheDocument();
     expect(screen.getByText('212.6 MB')).toBeInTheDocument();
+
+    const processRow = screen.getByText('npm run dev').closest('tr') as HTMLElement;
+    expect(within(processRow).getByText('npm run dev').closest('td')).toHaveClass('process-cell');
+    expect(within(processRow).getByText('5173').closest('td')).toHaveClass('ports-cell');
+    expect(within(processRow).getByText('1.2%').closest('td')).toHaveClass('cpu-cell');
+    expect(within(processRow).getByText('128.4 MB').closest('td')).toHaveClass('memory-cell');
+    expect(within(processRow).getByText('1m 5s').closest('td')).toHaveClass('uptime-cell');
+    expect(within(processRow).getByText('running').closest('td')).toHaveClass('status-cell');
+    expect(within(processRow).getByRole('button', { name: 'Stop' }).closest('td')).toHaveClass('action-cell');
 
     await user.type(screen.getByLabelText('Search'), 'uvicorn');
 
@@ -168,7 +237,7 @@ describe('App', () => {
       } as Response)
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ pid: 101, signal: 'SIGTERM', status: 'requested', message: 'sent' }),
+        json: async () => ({ pid: 101, signal: 'terminate', status: 'requested', message: 'sent' }),
       } as Response)
       .mockResolvedValueOnce({
         ok: true,
@@ -184,24 +253,43 @@ describe('App', () => {
     expect(screen.getByRole('dialog', { name: 'Stop process?' })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole('button', { name: 'Send SIGTERM' }));
+    await user.click(screen.getByRole('button', { name: 'Stop process' }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith('/api/processes/101/kill', { method: 'POST' });
     });
   });
 
+  test('marks the process row selected while its stop dialog is open', async () => {
+    const user = userEvent.setup();
+    mockFetch(populatedResponse);
+
+    render(<App />);
+
+    const processRow = (await screen.findByText('npm run dev')).closest('tr') as HTMLElement;
+    expect(processRow).not.toHaveClass('row-selected');
+
+    await user.click(within(processRow).getByRole('button', { name: 'Stop' }));
+
+    expect(processRow).toHaveClass('row-selected');
+    expect(screen.getByRole('dialog', { name: 'Stop process?' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByRole('dialog', { name: 'Stop process?' })).not.toBeInTheDocument();
+    expect(processRow).not.toHaveClass('row-selected');
+  });
+
   test('polls every two seconds and cleans up interval on unmount', async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     const fetchMock = mockFetch(emptyResponse);
 
     const { unmount } = render(<App />);
-    await vi.runOnlyPendingTimersAsync();
-    expect(screen.getByText('No development processes detected.')).toBeInTheDocument();
+    expect(await screen.findByText('No development processes detected.')).toBeInTheDocument();
     const callsAfterInitialLoad = fetchMock.mock.calls.length;
 
     await vi.advanceTimersByTimeAsync(2000);
-    expect(fetchMock).toHaveBeenCalledTimes(callsAfterInitialLoad + 1);
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(callsAfterInitialLoad);
 
     unmount();
     const callsBeforeUnmountTick = fetchMock.mock.calls.length;

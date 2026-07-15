@@ -9,7 +9,9 @@ import pytest
 from app.models import ProcessInfo
 from app.scanner import (
     build_groups,
+    command_tokens,
     detect_port_conflicts,
+    executable_name,
     is_dev_process,
     listening_ports_by_pid,
     process_to_info,
@@ -46,12 +48,71 @@ class FakeProcess:
 
 def test_filters_dev_processes_and_excludes_system_processes() -> None:
     assert is_dev_process("node", "npm run dev")
+    assert is_dev_process("node.exe", "npm run dev")
     assert is_dev_process("python", "uvicorn app.main:app")
+    assert is_dev_process("python.exe", "uvicorn app.main:app")
     assert not is_dev_process("sshd", "/usr/sbin/sshd")
     assert not is_dev_process("fusermount3", "fusermount3 -o rw,nodev -- /run/user/1000/doc")
     assert not is_dev_process("Typora", "/proc/self/exe --node-integration-in-worker")
     assert not is_dev_process("MainThread", "node /home/user/.nvm/bin/codex")
     assert not is_dev_process("python3", "/usr/bin/python3 /usr/bin/wsdd")
+
+
+def test_executable_name_strips_windows_suffixes() -> None:
+    assert executable_name("node.exe") == "node"
+    assert executable_name(r"C:\Program Files\nodejs\node.exe") == "node"
+    assert executable_name("npm.cmd") == "npm"
+    assert executable_name("python") == "python"
+
+
+def test_process_to_info_recognizes_windows_python_exe_with_port() -> None:
+    process = FakeProcess(
+        {
+            "pid": 45,
+            "name": "python.exe",
+            "cmdline": [r"C:\Python311\python.exe", "-m", "uvicorn", "app.main:app"],
+            "cwd": r"C:\work\backend",
+            "cpu_percent": 1.0,
+            "memory_info": SimpleNamespace(rss=2097152),
+            "create_time": 90.0,
+            "status": "running",
+        }
+    )
+
+    info = process_to_info(process, [8008], now=100.0)
+
+    assert info is not None
+    assert info.pid == 45
+    assert info.name == "python.exe"
+    assert info.ports == [8008]
+
+
+def test_process_to_info_recognizes_windows_node_exe_dev_tool() -> None:
+    process = FakeProcess(
+        {
+            "pid": 46,
+            "name": "node.exe",
+            "cmdline": [r"C:\Program Files\nodejs\node.exe", r"C:\work\app\node_modules\vite\bin\vite.js"],
+            "cwd": r"C:\work\app",
+            "cpu_percent": 2.0,
+            "memory_info": SimpleNamespace(rss=10485760),
+            "create_time": 90.0,
+            "status": "running",
+        }
+    )
+
+    info = process_to_info(process, [5173], now=100.0)
+
+    assert info is not None
+    assert info.pid == 46
+    assert info.ports == [5173]
+
+
+def test_command_tokens_handles_windows_backslash_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.scanner.os.name", "nt")
+    tokens = command_tokens(r"C:\Python311\python.exe -m uvicorn app.main:app")
+    assert tokens[0] == r"C:\Python311\python.exe"
+    assert "uvicorn" in tokens
 
 
 def test_process_to_info_handles_missing_cwd() -> None:
@@ -195,3 +256,17 @@ def test_terminate_process_reports_missing_pid(monkeypatch: pytest.MonkeyPatch) 
 
     with pytest.raises(Exception, match="Process 999 was not found"):
         terminate_process(999)
+
+
+def test_terminate_process_calls_terminate(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class FakePsutilProcess:
+        def terminate(self) -> None:
+            calls.append("terminate")
+
+    monkeypatch.setattr(psutil, "Process", lambda pid: FakePsutilProcess())
+
+    terminate_process(123)
+
+    assert calls == ["terminate"]

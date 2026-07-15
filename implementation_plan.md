@@ -26,7 +26,7 @@ This implementation plan outlines the development of **Server-View**, a system-l
 Run commands:
 
 ```bash
-cd backend && uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+cd backend && uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8008
 cd frontend && npm run dev
 ```
 
