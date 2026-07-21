@@ -199,3 +199,5 @@ frontend/dist/
 frontend/.vite/
 *.tsbuildinfo
 /frontend/node_modules
+
+docs/superpowers/*
