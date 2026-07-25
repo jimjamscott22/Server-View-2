@@ -3,6 +3,11 @@
 set -e
 cd "$(dirname "$0")"
 
+# Load nvm-managed Node (the system /usr/bin/node is too old for Vite's crypto.hash usage,
+# and non-interactive launches like the desktop entry don't source ~/.bashrc for it).
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
 BACKEND_PID=""
 FRONTEND_PID=""
 TRAY_MODE=false
