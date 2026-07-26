@@ -30,7 +30,7 @@ function labelOf(path: string | null): string {
   if (!path) {
     return 'Ungrouped';
   }
-  const segments = path.split('/').filter(Boolean);
+  const segments = path.split(/[\\/]+/).filter(Boolean);
   return segments[segments.length - 1] ?? path;
 }
 

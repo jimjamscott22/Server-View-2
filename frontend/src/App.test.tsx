@@ -87,7 +87,7 @@ afterEach(() => {
 });
 
 describe('App', () => {
-  test('renders functional navigation and labels the current theme', async () => {
+  test('renders functional navigation and toggles compact density', async () => {
     const user = userEvent.setup();
     mockFetch(emptyResponse);
 
@@ -95,14 +95,30 @@ describe('App', () => {
     await screen.findByText('No development processes detected.');
 
     expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('href', '#overview');
-    expect(screen.getByRole('link', { name: 'Processes' })).toHaveAttribute('href', '#processes');
-    expect(screen.getByRole('link', { name: 'Ports' })).toHaveAttribute('href', '#ports');
+    expect(screen.getByRole('link', { name: 'Processes' })).toHaveAttribute('href', '#workspace');
+    expect(screen.getByRole('link', { name: 'Ports' })).toHaveAttribute('href', '#workspace');
 
-    const themeButton = screen.getByRole('button', { name: 'Light theme' });
-    await user.click(themeButton);
+    const compactButton = screen.getByRole('button', { name: 'Compact' });
+    await user.click(compactButton);
 
-    expect(screen.getByRole('button', { name: 'Dark theme' })).toBeInTheDocument();
-    expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+    expect(screen.getByRole('button', { name: 'Comfortable' })).toHaveAttribute('aria-pressed', 'true');
+    expect(document.querySelector('.dashboard-shell')).toHaveClass('is-compact');
+  });
+
+  test('switches between grouped table, project cards, and port map', async () => {
+    const user = userEvent.setup();
+    mockFetch(populatedResponse);
+
+    render(<App />);
+    expect(await screen.findByText('npm run dev')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'Project cards' }));
+    expect(screen.getByRole('heading', { name: 'See services in their project context' })).toBeInTheDocument();
+    expect(screen.getByText('/workspace/frontend')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'Port map' }));
+    expect(screen.getByRole('heading', { name: 'Follow ports back to their owners' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /5173 frontend node/i })).toBeInTheDocument();
   });
 
   test('renders loading and then empty state', async () => {

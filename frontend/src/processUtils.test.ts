@@ -59,4 +59,14 @@ describe('buildRenderGroups', () => {
     expect(groups.map((g) => g.label)).toEqual(['zeta', 'Ungrouped']);
     expect(groups[1].key).toBe('pid:2');
   });
+
+  test('extracts project labels from Windows paths', () => {
+    const process = makeProcess({
+      pid: 1,
+      cwd: 'C:\\Users\\jamie\\repos\\Server-View-2\\frontend',
+      ports: [5178],
+    });
+
+    expect(buildRenderGroups([process])[0].label).toBe('frontend');
+  });
 });

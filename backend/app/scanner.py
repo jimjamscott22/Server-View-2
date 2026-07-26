@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shlex
+import socket
 import time
 from collections.abc import Iterable
 from pathlib import PurePath
@@ -245,12 +246,17 @@ def scan_processes() -> ProcessListResponse:
     port_conflicts = detect_port_conflicts(processes)
     active_ports = sorted({port for process in processes for port in process.ports})
     total_memory_mb = round(sum(process.memory_mb for process in processes), 1)
+    system_memory_mb = psutil.virtual_memory().total / 1024 / 1024
     summary = ProcessSummary(
         process_count=len(processes),
         total_memory_mb=total_memory_mb,
         active_ports=active_ports,
         group_count=len(groups),
         conflict_count=len(port_conflicts),
+        host_name=socket.gethostname(),
+        memory_percent=round((total_memory_mb / system_memory_mb) * 100, 1)
+        if system_memory_mb
+        else 0.0,
     )
     return ProcessListResponse(
         processes=processes,

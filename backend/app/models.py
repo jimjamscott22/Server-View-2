@@ -48,6 +48,8 @@ class ProcessSummary(BaseModel):
     active_ports: list[int] = Field(default_factory=list)
     group_count: int = 0
     conflict_count: int = 0
+    host_name: str = "localhost"
+    memory_percent: float = 0.0
 
 
 class ProcessListResponse(BaseModel):

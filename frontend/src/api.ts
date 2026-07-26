@@ -44,8 +44,8 @@ export function connectWebSocket(
   disconnectWebSocket();
 
   onMessageCallback = onMessage;
-  onErrorCallback = onError;
-  onCloseCallback = onClose;
+  onErrorCallback = onError ?? null;
+  onCloseCallback = onClose ?? null;
   reconnectAttempts = 0;
 
   connect();

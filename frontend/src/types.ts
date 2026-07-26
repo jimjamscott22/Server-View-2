@@ -38,6 +38,8 @@ export interface ProcessSummary {
   active_ports: number[];
   group_count?: number;
   conflict_count?: number;
+  host_name?: string;
+  memory_percent?: number;
 }
 
 export interface ProcessListResponse {

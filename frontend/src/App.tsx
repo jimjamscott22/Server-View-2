@@ -5,9 +5,13 @@ import {
   DashboardHeader,
   ProcessToolbar,
   SummaryBand,
+  WorkspaceHeader,
 } from './components/DashboardChrome';
+import type { ViewMode } from './components/DashboardChrome';
 import { ConfirmStopDialog } from './components/ConfirmStopDialog';
+import { PortMap } from './components/PortMap';
 import { ProcessTable } from './components/ProcessTable';
+import { ProjectCards } from './components/ProjectCards';
 import { buildRenderGroups, filterProcesses } from './processUtils';
 import type { ProcessInfo, ProcessListResponse, ProcessSummary } from './types';
 
@@ -17,39 +21,7 @@ const EMPTY_SUMMARY: ProcessSummary = {
   active_ports: [],
 };
 
-type Theme = 'light' | 'dark';
 type StopError = { pid: number; message: string };
-type ThemeStorage = {
-  getItem: (key: string) => string | null;
-  setItem: (key: string, value: string) => void;
-};
-
-const THEME_STORAGE_KEY = 'serverview-theme';
-
-function isThemeStorage(value: unknown): value is ThemeStorage {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    'getItem' in value &&
-    'setItem' in value &&
-    typeof value.getItem === 'function' &&
-    typeof value.setItem === 'function'
-  );
-}
-
-function getThemeStorage(): ThemeStorage | null {
-  const storage = window.localStorage;
-  return isThemeStorage(storage) ? storage : null;
-}
-
-function getInitialTheme(): Theme {
-  const stored = getThemeStorage()?.getItem(THEME_STORAGE_KEY);
-  if (stored === 'light' || stored === 'dark') {
-    return stored;
-  }
-  const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)');
-  return prefersDark?.matches ? 'dark' : 'light';
-}
 
 function App() {
   const [data, setData] = useState<ProcessListResponse>({ processes: [], summary: EMPTY_SUMMARY });
@@ -61,8 +33,9 @@ function App() {
   const [isStopping, setIsStopping] = useState(false);
   const [stopError, setStopError] = useState<StopError | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-  const [theme, setTheme] = useState<Theme>(getInitialTheme);
   const [wsConnected, setWsConnected] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>('table');
+  const [compact, setCompact] = useState(false);
 
   const toggleGroup = useCallback((key: string) => {
     setExpandedGroups((current) => {
@@ -75,11 +48,6 @@ function App() {
       return next;
     });
   }, []);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    getThemeStorage()?.setItem(THEME_STORAGE_KEY, theme);
-  }, [theme]);
 
   // Initialize WebSocket connection and fetch initial data
   useEffect(() => {
@@ -193,7 +161,8 @@ function App() {
   
   // Status is live if WebSocket is connected, refreshing if manually refreshing, stale if error
   const statusState = wsConnected ? 'live' : isRefreshing ? 'refreshing' : isStale ? 'stale' : 'live';
-  const statusLabel = wsConnected ? 'Live (WebSocket)' : isRefreshing ? 'Refreshing' : isStale ? 'Stale data' : 'Live';
+  const statusLabel = wsConnected ? 'Live · WebSocket' : isRefreshing ? 'Refreshing' : isStale ? 'Stale data' : 'Live · polling';
+  const hostName = data.summary.host_name ?? 'localhost';
 
   async function handleConfirmStop() {
     if (!selectedProcess) {
@@ -218,28 +187,31 @@ function App() {
   }
 
   return (
-    <div className="dashboard-shell">
-      <AppNavigation />
+    <div className={`dashboard-shell${compact ? ' is-compact' : ''}`}>
+      <AppNavigation summary={data.summary} isOnline={wsConnected || hasData} />
       <main className="app-shell">
         <section id="overview" className="overview-section">
           <DashboardHeader
-            theme={theme}
+            hostName={hostName}
             statusState={statusState}
             statusLabel={statusLabel}
             isRefreshing={isRefreshing}
-            onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+            compact={compact}
+            onToggleCompact={() => setCompact((current) => !current)}
             onRefresh={() => void loadProcesses()}
           />
-          <SummaryBand summary={data.summary} />
+          <SummaryBand summary={data.summary} isOnline={wsConnected || hasData} />
         </section>
-        <section id="processes" className="process-section" aria-label="Processes">
-          <ProcessToolbar query={query} onQueryChange={setQuery} />
+        <section id="workspace" className="process-section" aria-label="Processes">
+          <WorkspaceHeader mode={viewMode} onModeChange={setViewMode} />
+          <ProcessToolbar query={query} showing={visibleProcesses.length} total={data.processes.length} onQueryChange={setQuery} />
           {error ? <div className="alert">Error: {error}</div> : null}
-          {!wsConnected ? <div className="alert info">Using fallback polling. WebSocket will reconnect automatically.</div> : null}
           {data.port_conflicts && data.port_conflicts.length > 0 ? <div className="conflict-banner" role="status">{data.port_conflicts.map((conflict) => `Port ${conflict.port} claimed by ${conflict.pids.length} processes`).join(' \u00b7 ')}</div> : null}
           {isLoading ? <div className="state">Loading processes...</div> : null}
           {!isLoading && visibleProcesses.length === 0 ? <div className="state">{query ? 'No processes match the current filter.' : 'No development processes detected.'}</div> : null}
-          {!isLoading && visibleProcesses.length > 0 ? <ProcessTable groups={groups} conflictPorts={conflictPorts} expandedGroups={expandedGroups} onToggleGroup={toggleGroup} isStale={isStale} selectedPid={selectedProcess?.pid ?? null} stopError={stopError} onStop={(process) => { setStopError(null); setSelectedProcess(process); }} /> : null}
+          {!isLoading && visibleProcesses.length > 0 && viewMode === 'table' ? <ProcessTable groups={groups} conflictPorts={conflictPorts} expandedGroups={expandedGroups} onToggleGroup={toggleGroup} isStale={isStale} selectedPid={selectedProcess?.pid ?? null} stopError={stopError} onStop={(process) => { setStopError(null); setSelectedProcess(process); }} /> : null}
+          {!isLoading && visibleProcesses.length > 0 && viewMode === 'cards' ? <ProjectCards groups={groups} isStale={isStale} onStop={(process) => { setStopError(null); setSelectedProcess(process); }} /> : null}
+          {!isLoading && visibleProcesses.length > 0 && viewMode === 'ports' ? <PortMap groups={groups} hostName={hostName} onStop={(process) => { setStopError(null); setSelectedProcess(process); }} /> : null}
         </section>
         {selectedProcess ? <ConfirmStopDialog process={selectedProcess} isStopping={isStopping} error={stopError?.pid === selectedProcess.pid ? stopError.message : null} onCancel={() => setSelectedProcess(null)} onConfirm={() => void handleConfirmStop()} /> : null}
       </main>
