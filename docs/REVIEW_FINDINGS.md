@@ -91,11 +91,12 @@ Server-View-2 is a well-architected, cleanly implemented application for monitor
 - **Solution**: Add pystray integration for system tray icon
 - **Status**: 📋 Planned (user's original idea)
 
-#### 3. **Enhanced Process Detection**
-- **Current**: Limited to Node.js and Python dev tools
-- **Issue**: Misses Go, Java, Rust, Ruby, PHP, databases, Docker, and many other common dev tools
-- **Impact**: More comprehensive monitoring coverage
-- **Solution**: Expand keyword list and add port-based detection
+#### 3. **Enhanced Process Detection** ✅ **IMPLEMENTED**
+- **Current**: Detects Node.js, Python, Go, Java, Rust, Ruby, and PHP development commands
+- **Scope**: Exact language-tool signatures plus port-based fallback for generic Java, Ruby, and PHP runtimes
+- **Remaining**: Database and Docker detection remain separate future enhancements
+- **Impact**: More comprehensive monitoring coverage without broad keyword false positives
+- **Status**: ✅ Language-toolchain expansion implemented
 
 #### 4. **Authentication & Security**
 - **Current**: No authentication, CORS allows localhost only
