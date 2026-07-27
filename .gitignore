@@ -201,3 +201,4 @@ frontend/.vite/
 /frontend/node_modules
 
 docs/superpowers/*
+.worktrees/
