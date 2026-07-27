@@ -5,7 +5,7 @@ import shlex
 import socket
 import time
 from collections.abc import Iterable
-from pathlib import PurePath
+from pathlib import PurePath, PureWindowsPath
 
 import psutil
 
@@ -61,7 +61,8 @@ def command_tokens(command: str) -> list[str]:
 
 
 def executable_name(token: str) -> str:
-    name = PurePath(token).name.lower()
+    path = PureWindowsPath(token) if "\\" in token else PurePath(token)
+    name = path.name.lower()
     for suffix in WINDOWS_EXECUTABLE_SUFFIXES:
         if name.endswith(suffix):
             return name[: -len(suffix)]
