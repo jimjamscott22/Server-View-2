@@ -12,20 +12,47 @@ import psutil
 from app.models import PortConflict, ProcessGroup, ProcessInfo, ProcessListResponse, ProcessSummary
 
 
-DEV_PROCESS_KEYWORDS = (
-    "node",
-    "npm",
-    "vite",
-    "next",
-    "python",
-    "uvicorn",
-    "fastapi",
-)
-
 NODE_RUNTIME_NAMES = {"node", "npm", "npx", "pnpm", "yarn", "bun", "vite", "next"}
 NODE_DEV_TOOL_NAMES = {"npm", "npx", "pnpm", "yarn", "bun", "vite", "next"}
 PYTHON_RUNTIME_NAMES = {"python", "python3", "uvicorn", "fastapi"}
 PYTHON_DEV_HINTS = {"uvicorn", "fastapi", "manage.py", "flask", "django"}
+LANGUAGE_DEV_TOOL_NAMES = {"air", "fresh", "puma", "rackup"}
+GO_DEV_SIGNATURES = (("go", "run"),)
+JAVA_DEV_SIGNATURES = (
+    ("mvn", "spring-boot:run"),
+    ("mvnw", "spring-boot:run"),
+    ("mvn", "quarkus:dev"),
+    ("mvnw", "quarkus:dev"),
+    ("mvn", "micronaut:run"),
+    ("mvnw", "micronaut:run"),
+    ("gradle", "bootrun"),
+    ("gradlew", "bootrun"),
+    ("gradle", "quarkusdev"),
+    ("gradlew", "quarkusdev"),
+)
+RUST_DEV_SIGNATURES = (
+    ("cargo", "run"),
+    ("cargo", "watch"),
+    ("cargo", "leptos", "watch"),
+    ("cargo", "tauri", "dev"),
+    ("trunk", "serve"),
+)
+RUBY_DEV_SIGNATURES = (
+    ("rails", "server"),
+    ("rails", "s"),
+)
+PHP_DEV_SIGNATURES = (
+    ("php", "-s"),
+    ("artisan", "serve"),
+    ("symfony", "server:start"),
+)
+LANGUAGE_DEV_SIGNATURES = (
+    *GO_DEV_SIGNATURES,
+    *JAVA_DEV_SIGNATURES,
+    *RUST_DEV_SIGNATURES,
+    *RUBY_DEV_SIGNATURES,
+    *PHP_DEV_SIGNATURES,
+)
 EXCLUDED_PROCESS_NAMES = {"bwrap", "codex-linux-sandbox"}
 WINDOWS_EXECUTABLE_SUFFIXES = (".exe", ".bat", ".cmd", ".com")
 
@@ -69,19 +96,35 @@ def executable_name(token: str) -> str:
     return name
 
 
+def command_contains_signature(tokens: list[str], signature: tuple[str, ...]) -> bool:
+    width = len(signature)
+    return any(
+        tuple(tokens[start : start + width]) == signature
+        for start in range(len(tokens) - width + 1)
+    )
+
+
 def is_dev_process(name: str, command: str) -> bool:
     process_name = executable_name(name)
-    tokens = command_tokens(command)
-    executables = [process_name, *(executable_name(token) for token in tokens)]
-    token_text = " ".join(executables)
+    tokens = [
+        process_name,
+        *(executable_name(token) for token in command_tokens(command)),
+    ]
+    token_text = " ".join(tokens)
 
-    if any(executable in NODE_DEV_TOOL_NAMES for executable in executables):
+    if any(token in NODE_DEV_TOOL_NAMES for token in tokens):
         return True
 
-    if "uvicorn" in executables or "fastapi" in executables:
+    if any(token in LANGUAGE_DEV_TOOL_NAMES for token in tokens):
         return True
 
-    if process_name in PYTHON_RUNTIME_NAMES or any(executable in {"python", "python3"} for executable in executables):
+    if any(command_contains_signature(tokens, signature) for signature in LANGUAGE_DEV_SIGNATURES):
+        return True
+
+    if "uvicorn" in tokens or "fastapi" in tokens:
+        return True
+
+    if process_name in PYTHON_RUNTIME_NAMES or any(token in {"python", "python3"} for token in tokens):
         return any(hint in token_text for hint in PYTHON_DEV_HINTS)
 
     return False

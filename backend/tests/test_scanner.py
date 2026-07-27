@@ -58,6 +58,64 @@ def test_filters_dev_processes_and_excludes_system_processes() -> None:
     assert not is_dev_process("python3", "/usr/bin/python3 /usr/bin/wsdd")
 
 
+@pytest.mark.parametrize(
+    ("name", "command"),
+    [
+        ("go", "go run ./cmd/api"),
+        ("air", "air -c .air.toml"),
+        ("fresh", "fresh"),
+        ("mvn", "mvn spring-boot:run"),
+        ("mvnw.cmd", "mvnw.cmd quarkus:dev"),
+        ("mvn", "mvn micronaut:run"),
+        ("gradle", "gradle bootRun"),
+        ("gradlew.bat", "gradlew.bat quarkusDev"),
+        ("cargo", "cargo run"),
+        ("cargo", "cargo watch -x run"),
+        ("cargo", "cargo leptos watch"),
+        ("cargo", "cargo tauri dev"),
+        ("trunk", "trunk serve"),
+        ("rails", "rails server"),
+        ("rails", "rails s"),
+        ("ruby", "bundle exec rails server"),
+        ("ruby", "bundle exec rails s"),
+        ("rackup", "rackup"),
+        ("puma", "puma"),
+        ("php", "php -S localhost:8000"),
+        ("php", "php artisan serve"),
+        ("artisan", "artisan serve"),
+        ("symfony", "symfony server:start"),
+    ],
+)
+def test_detects_language_development_commands(name: str, command: str) -> None:
+    assert is_dev_process(name, command)
+
+
+@pytest.mark.parametrize(
+    ("name", "command"),
+    [
+        ("go", "go version"),
+        ("java", "java -version"),
+        ("mvn", "mvn package"),
+        ("gradle", "gradle build"),
+        ("cargo", "cargo build"),
+        ("trunk", "trunk build"),
+        ("ruby", "ruby cleanup.rb"),
+        ("rails", "rails db:migrate"),
+        ("php", "php migrate.php"),
+        ("artisan", "artisan migrate"),
+        ("symfony", "symfony console"),
+    ],
+)
+def test_excludes_non_server_language_commands(name: str, command: str) -> None:
+    assert not is_dev_process(name, command)
+
+
+def test_detects_windows_java_wrapper_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.scanner.os.name", "nt")
+
+    assert is_dev_process("java.exe", r"C:\work\mvnw.cmd spring-boot:run")
+
+
 def test_executable_name_strips_windows_suffixes() -> None:
     assert executable_name("node.exe") == "node"
     assert executable_name(r"C:\Program Files\nodejs\node.exe") == "node"
