@@ -166,6 +166,61 @@ def test_process_to_info_recognizes_windows_node_exe_dev_tool() -> None:
     assert info.ports == [5173]
 
 
+def test_process_to_info_keeps_recognized_command_without_port() -> None:
+    process = FakeProcess(
+        {
+            "pid": 47,
+            "name": "cargo",
+            "cmdline": ["cargo", "run"],
+            "cwd": "/work/rust-api",
+            "cpu_percent": 1.0,
+            "memory_info": SimpleNamespace(rss=2097152),
+            "create_time": 90.0,
+            "status": "running",
+        }
+    )
+
+    info = process_to_info(process, [], now=100.0)
+
+    assert info is not None
+    assert info.pid == 47
+    assert info.ports == []
+
+
+@pytest.mark.parametrize(
+    ("name", "cmdline"),
+    [
+        ("java", ["java", "-jar", "app.jar"]),
+        ("javaw.exe", ["javaw.exe", "-jar", "app.jar"]),
+        ("ruby", ["ruby", "app.rb"]),
+        ("php.exe", ["php.exe", "app.php"]),
+    ],
+)
+def test_process_to_info_requires_port_for_generic_language_runtime(
+    name: str,
+    cmdline: list[str],
+) -> None:
+    process = FakeProcess(
+        {
+            "pid": 48,
+            "name": name,
+            "cmdline": cmdline,
+            "cwd": "/work/api",
+            "cpu_percent": 1.0,
+            "memory_info": SimpleNamespace(rss=2097152),
+            "create_time": 90.0,
+            "status": "running",
+        }
+    )
+
+    assert process_to_info(process, [], now=100.0) is None
+
+    info = process_to_info(process, [8080], now=100.0)
+
+    assert info is not None
+    assert info.ports == [8080]
+
+
 def test_command_tokens_handles_windows_backslash_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.scanner.os.name", "nt")
     tokens = command_tokens(r"C:\Python311\python.exe -m uvicorn app.main:app")

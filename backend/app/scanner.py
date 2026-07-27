@@ -53,6 +53,12 @@ LANGUAGE_DEV_SIGNATURES = (
     *RUBY_DEV_SIGNATURES,
     *PHP_DEV_SIGNATURES,
 )
+LANGUAGE_RUNTIME_NAMES = {"java", "javaw", "ruby", "php"}
+PORT_DETECTABLE_RUNTIME_NAMES = (
+    NODE_RUNTIME_NAMES
+    | PYTHON_RUNTIME_NAMES
+    | LANGUAGE_RUNTIME_NAMES
+)
 EXCLUDED_PROCESS_NAMES = {"bwrap", "codex-linux-sandbox"}
 WINDOWS_EXECUTABLE_SUFFIXES = (".exe", ".bat", ".cmd", ".com")
 
@@ -171,7 +177,7 @@ def process_to_info(process: psutil.Process, ports: list[int], now: float | None
     if executable_name(name) in EXCLUDED_PROCESS_NAMES:
         return None
 
-    runtime_with_port = bool(ports) and executable_name(name) in {*NODE_RUNTIME_NAMES, *PYTHON_RUNTIME_NAMES}
+    runtime_with_port = bool(ports) and executable_name(name) in PORT_DETECTABLE_RUNTIME_NAMES
     if not is_dev_process(name, command) and not runtime_with_port:
         return None
 
