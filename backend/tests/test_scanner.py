@@ -110,6 +110,22 @@ def test_excludes_non_server_language_commands(name: str, command: str) -> None:
     assert not is_dev_process(name, command)
 
 
+@pytest.mark.parametrize(
+    ("name", "command"),
+    [
+        ("python", "python /tmp/puma"),
+        ("python", "python worker.py go run"),
+        ("worker", ["worker", "go run"]),
+    ],
+    ids=["tool-like-file", "signature-in-arguments", "signature-in-one-argument"],
+)
+def test_excludes_language_signatures_outside_executable_grammar(
+    name: str,
+    command: str | list[str],
+) -> None:
+    assert not is_dev_process(name, command)
+
+
 def test_detects_windows_java_wrapper_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("app.scanner.os.name", "nt")
 
@@ -185,6 +201,34 @@ def test_process_to_info_keeps_recognized_command_without_port() -> None:
     assert info is not None
     assert info.pid == 47
     assert info.ports == []
+
+
+@pytest.mark.parametrize(
+    "cmdline",
+    [
+        ["python", "/tmp/puma"],
+        ["python", "worker.py", "go", "run"],
+        ["worker", "go run"],
+    ],
+    ids=["tool-like-file", "signature-in-arguments", "signature-in-one-argument"],
+)
+def test_process_to_info_excludes_signatures_outside_executable_grammar(
+    cmdline: list[str],
+) -> None:
+    process = FakeProcess(
+        {
+            "pid": 49,
+            "name": "worker",
+            "cmdline": cmdline,
+            "cwd": "/work/tasks",
+            "cpu_percent": 1.0,
+            "memory_info": SimpleNamespace(rss=2097152),
+            "create_time": 90.0,
+            "status": "running",
+        }
+    )
+
+    assert process_to_info(process, [], now=100.0) is None
 
 
 @pytest.mark.parametrize(

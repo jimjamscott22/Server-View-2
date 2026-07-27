@@ -40,9 +40,12 @@ RUST_DEV_SIGNATURES = (
 RUBY_DEV_SIGNATURES = (
     ("rails", "server"),
     ("rails", "s"),
+    ("bundle", "exec", "rails", "server"),
+    ("bundle", "exec", "rails", "s"),
 )
 PHP_DEV_SIGNATURES = (
     ("php", "-s"),
+    ("php", "artisan", "serve"),
     ("artisan", "serve"),
     ("symfony", "server:start"),
 )
@@ -61,6 +64,7 @@ PORT_DETECTABLE_RUNTIME_NAMES = (
 )
 EXCLUDED_PROCESS_NAMES = {"bwrap", "codex-linux-sandbox"}
 WINDOWS_EXECUTABLE_SUFFIXES = (".exe", ".bat", ".cmd", ".com")
+CommandLine = list[str] | tuple[str, ...] | str | None
 
 
 class ProcessAccessDenied(Exception):
@@ -75,7 +79,7 @@ class ProcessTerminationError(Exception):
     """Raised when a process exists but could not be terminated."""
 
 
-def command_to_text(command: list[str] | tuple[str, ...] | str | None) -> str:
+def command_to_text(command: CommandLine) -> str:
     if isinstance(command, str):
         return command
     if command:
@@ -83,7 +87,9 @@ def command_to_text(command: list[str] | tuple[str, ...] | str | None) -> str:
     return ""
 
 
-def command_tokens(command: str) -> list[str]:
+def command_tokens(command: CommandLine) -> list[str]:
+    if not isinstance(command, str):
+        return list(command or ())
     # POSIX shlex mishandles Windows paths with backslashes (e.g. C:\Users\...).
     if os.name == "nt":
         return command.split()
@@ -102,32 +108,30 @@ def executable_name(token: str) -> str:
     return name
 
 
-def command_contains_signature(tokens: list[str], signature: tuple[str, ...]) -> bool:
-    width = len(signature)
-    return any(
-        tuple(tokens[start : start + width]) == signature
-        for start in range(len(tokens) - width + 1)
-    )
+def command_starts_with_signature(tokens: list[str], signature: tuple[str, ...]) -> bool:
+    return tuple(tokens[: len(signature)]) == signature
 
 
-def is_dev_process(name: str, command: str) -> bool:
+def is_dev_process(name: str, command: CommandLine) -> bool:
     process_name = executable_name(name)
-    tokens = [
-        process_name,
-        *(executable_name(token) for token in command_tokens(command)),
-    ]
-    token_text = " ".join(tokens)
+    tokens = [executable_name(token) for token in command_tokens(command)]
+    token_text = " ".join([process_name, *tokens])
 
-    if any(token in NODE_DEV_TOOL_NAMES for token in tokens):
+    if process_name in NODE_DEV_TOOL_NAMES or any(token in NODE_DEV_TOOL_NAMES for token in tokens):
         return True
 
-    if any(token in LANGUAGE_DEV_TOOL_NAMES for token in tokens):
+    if process_name in LANGUAGE_DEV_TOOL_NAMES or (
+        tokens and tokens[0] in LANGUAGE_DEV_TOOL_NAMES
+    ):
         return True
 
-    if any(command_contains_signature(tokens, signature) for signature in LANGUAGE_DEV_SIGNATURES):
+    if any(
+        command_starts_with_signature(tokens, signature)
+        for signature in LANGUAGE_DEV_SIGNATURES
+    ):
         return True
 
-    if "uvicorn" in tokens or "fastapi" in tokens:
+    if process_name in {"uvicorn", "fastapi"} or "uvicorn" in tokens or "fastapi" in tokens:
         return True
 
     if process_name in PYTHON_RUNTIME_NAMES or any(token in {"python", "python3"} for token in tokens):
@@ -173,12 +177,13 @@ def process_to_info(process: psutil.Process, ports: list[int], now: float | None
         return None
 
     name = attrs.get("name") or f"pid-{attrs['pid']}"
-    command = command_to_text(attrs.get("cmdline"))
+    cmdline = attrs.get("cmdline")
+    command = command_to_text(cmdline)
     if executable_name(name) in EXCLUDED_PROCESS_NAMES:
         return None
 
     runtime_with_port = bool(ports) and executable_name(name) in PORT_DETECTABLE_RUNTIME_NAMES
-    if not is_dev_process(name, command) and not runtime_with_port:
+    if not is_dev_process(name, cmdline) and not runtime_with_port:
         return None
 
     memory_info = attrs.get("memory_info")

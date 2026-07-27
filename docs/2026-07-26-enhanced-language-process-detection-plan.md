@@ -4,7 +4,7 @@
 
 **Goal:** Detect long-running Go, Java, Rust, Ruby, and PHP development commands while excluding unrelated language processes.
 
-**Architecture:** Keep detection in `backend/app/scanner.py`, normalize process and command tokens once, and match exact ecosystem signatures through a shared adjacent-sequence helper. Specific development commands qualify without a port; generic Java, Ruby, and PHP runtimes qualify only through the existing listening-port fallback.
+**Architecture:** Keep detection in `backend/app/scanner.py`, preserve raw argv element boundaries, normalize process and command tokens once, and match exact ecosystem signatures only at explicit executable or known-wrapper positions. Specific development commands qualify without a port; generic Java, Ruby, and PHP runtimes qualify only through the existing listening-port fallback.
 
 **Tech Stack:** Python 3.11+, psutil, pytest
 
@@ -15,8 +15,23 @@
 - Generic `java`, `javaw`, `ruby`, and `php` runtimes qualify only when they own a listening port.
 - Preserve current Node.js and Python behavior.
 - Use exact, case-insensitive command signatures rather than substring matching.
+- Match language signatures only at the command prefix or through a documented
+  wrapper grammar; never treat arbitrary file, option, or trailing arguments as
+  executable evidence.
+- Classify the original `psutil` argv sequence. Use `command_to_text()` only to
+  serialize the API display field.
 - Preserve Windows executable-suffix and path handling.
 - Do not change the API response, data model, or frontend.
+
+## User-Approved Final-Review Correction
+
+This correction supersedes Task 2's anywhere-in-argv adjacent-sequence matcher.
+The accepted grammar recognizes direct command prefixes plus the approved
+Maven/Gradle wrapper executables and `bundle exec rails` forms. It rejects
+tool-like filenames and signatures in arbitrary arguments, including
+`python /tmp/puma` and `python worker.py go run`. Classification accepts the
+original argv sequence so an element such as `"go run"` remains one argument;
+joining argv is display serialization only.
 
 ---
 

@@ -17,8 +17,8 @@ container runtimes, or other infrastructure processes.
 - Detect generic Java, Ruby, and PHP runtime processes when they own a
   listening port.
 - Preserve current Node.js and Python behavior.
-- Use exact, case-insensitive command signatures rather than substring
-  matching.
+- Use exact, case-insensitive, position-aware command signatures rather than
+  substring or anywhere-in-argument matching.
 - Preserve Windows executable-suffix handling.
 - Keep the API response, data model, and frontend unchanged.
 
@@ -34,7 +34,10 @@ container runtimes, or other infrastructure processes.
 
 The scanner will normalize the process name and command tokens with the
 existing `executable_name()` and `command_tokens()` helpers. Detection will use
-exact executable names and adjacent command-token signatures.
+exact executable names and command-prefix signatures. Language tools may
+qualify only in the executable position or through a documented wrapper grammar;
+arbitrary file, option, and trailing arguments are never treated as language
+tools.
 
 The new language signatures are:
 
@@ -49,7 +52,9 @@ The new language signatures are:
 Signature matching is case-insensitive after normalization. Options may appear
 after a recognized signature, but unrelated commands such as `go version`,
 `cargo build`, `java -version`, `ruby cleanup.rb`, and `php migrate.php` do not
-qualify.
+qualify. The known wrapper grammars are Maven/Gradle wrapper executables and
+`bundle exec rails`; signatures appearing later in an unrelated command, such
+as `python worker.py go run`, do not qualify.
 
 Specific development signatures qualify without a listening port. Generic
 runtime names do not qualify on name alone. A `java`, `javaw`, `ruby`, or `php`
@@ -61,11 +66,14 @@ existing runtime-plus-port fallback for Node.js and Python.
 Detection remains in `backend/app/scanner.py`. Small signature helpers will
 separate exact token-sequence matching from ecosystem-specific policy:
 
-- A token-sequence helper answers whether normalized command tokens contain an
-  exact adjacent sequence.
+- A token-sequence helper answers whether normalized command tokens start with
+  an exact signature.
 - Ecosystem constants define executable names and command signatures.
 - `is_dev_process()` delegates to the ecosystem signatures after applying the
   existing normalization.
+- `process_to_info()` passes the original `psutil` argv sequence to
+  `is_dev_process()` so one argv element can never be reinterpreted as multiple
+  signature tokens. `command_to_text()` remains display serialization only.
 - The runtime-plus-port fallback in `process_to_info()` expands to the new
   generic runtime names.
 
@@ -77,13 +85,15 @@ missing-process, and malformed-command handling remains unchanged.
 
 ## Data Flow
 
-1. `process_to_info()` obtains the process name, command line, and listening
-   ports.
-2. The process name and command tokens are normalized.
+1. `process_to_info()` obtains the process name, raw argv sequence, and
+   listening ports.
+2. The process name and original argv elements are normalized without losing
+   element boundaries.
 3. `is_dev_process()` checks exact development signatures.
 4. If no signature matches, `process_to_info()` applies the generic
    runtime-plus-port fallback.
-5. Matching processes continue through the existing resource, grouping,
+5. The raw argv is serialized separately for the display-only `command` field.
+6. Matching processes continue through the existing resource, grouping,
    conflict, summary, REST, and WebSocket paths without schema changes.
 
 ## Testing
@@ -92,6 +102,8 @@ missing-process, and malformed-command handling remains unchanged.
 
 - Parameterized positive cases for every documented language signature.
 - Parameterized negative cases for generic or build-only commands.
+- Negative cases for tool-like filenames, signatures in trailing arguments,
+  and a single argv element containing signature-like whitespace.
 - Windows suffix/path cases for newly supported tools.
 - `process_to_info()` coverage proving a recognized command is returned before
   it binds a port.

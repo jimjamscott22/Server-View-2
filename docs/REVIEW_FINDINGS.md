@@ -93,7 +93,7 @@ Server-View-2 is a well-architected, cleanly implemented application for monitor
 
 #### 3. **Enhanced Process Detection** ✅ **IMPLEMENTED**
 - **Current**: Detects Node.js, Python, Go, Java, Rust, Ruby, and PHP development commands
-- **Scope**: Exact language-tool signatures plus port-based fallback for generic Java, Ruby, and PHP runtimes
+- **Scope**: Position-aware exact language-tool signatures plus port-based fallback for generic Java, Ruby, and PHP runtimes
 - **Remaining**: Database and Docker detection remain separate future enhancements
 - **Impact**: More comprehensive monitoring coverage without broad keyword false positives
 - **Status**: ✅ Language-toolchain expansion implemented
