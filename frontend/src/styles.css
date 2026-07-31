@@ -185,6 +185,102 @@ h1, h2, h3, p, dl, dd { margin: 0; }
   color: var(--text-muted); font-family: var(--font-mono); font-size: 0.58rem;
 }
 
+.dev-port-bay { margin-top: 28px; }
+.dev-port-bay-head {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 14px;
+}
+.dev-port-bay-head h2 { margin-top: 10px; font-size: 1.28rem; font-weight: 480; letter-spacing: -0.03em; }
+.dev-port-bay-meta {
+  display: inline-flex; align-items: baseline; gap: 8px; color: var(--text-faint);
+  font-family: var(--font-mono); font-size: 0.55rem; letter-spacing: 0.1em; text-transform: uppercase;
+}
+.dev-port-bay-count { color: var(--accent); font-size: 1.05rem; font-weight: 750; letter-spacing: 0; }
+.dev-port-slots {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 11px;
+}
+.dev-port-slot {
+  position: relative; display: grid; min-height: 118px; grid-template-rows: auto 1fr;
+  gap: 14px; padding: 16px 15px 15px; border: 1px solid var(--border); border-radius: var(--radius);
+  background:
+    linear-gradient(165deg, rgba(0, 199, 243, 0.04), transparent 42%),
+    var(--surface);
+  box-shadow: var(--shadow-panel); text-align: left; overflow: hidden;
+}
+button.dev-port-slot {
+  min-height: 118px; width: 100%; cursor: pointer; color: inherit; font: inherit;
+}
+button.dev-port-slot:hover:not(:disabled) {
+  border-color: var(--accent); color: inherit;
+  background:
+    linear-gradient(165deg, rgba(0, 199, 243, 0.09), transparent 48%),
+    var(--surface-raised);
+}
+.dev-port-slot.is-free {
+  border-style: dashed; border-color: rgba(83, 130, 163, 0.45);
+  background: rgba(7, 28, 46, 0.45); box-shadow: none;
+}
+.dev-port-slot.is-occupied {
+  border-color: rgba(0, 199, 243, 0.55);
+}
+.dev-port-slot.is-conflict {
+  border-color: var(--danger-border);
+  background:
+    linear-gradient(165deg, rgba(255, 94, 115, 0.08), transparent 48%),
+    var(--surface);
+}
+button.dev-port-slot.is-conflict:hover:not(:disabled) {
+  border-color: var(--danger);
+  background:
+    linear-gradient(165deg, rgba(255, 94, 115, 0.12), transparent 48%),
+    var(--surface-raised);
+}
+.dev-port-led {
+  position: absolute; top: 16px; right: 15px; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--text-faint); box-shadow: 0 0 0 3px rgba(120, 144, 165, 0.08);
+}
+.dev-port-slot.is-occupied .dev-port-led {
+  background: var(--success);
+  box-shadow: 0 0 0 4px var(--success-soft), 0 0 12px rgba(105, 233, 154, 0.55);
+  animation: port-led-pulse 2.4s ease-in-out infinite;
+}
+.dev-port-slot.is-conflict .dev-port-led {
+  background: var(--danger);
+  box-shadow: 0 0 0 4px var(--danger-soft), 0 0 12px rgba(255, 94, 115, 0.5);
+  animation: port-led-pulse 1.2s ease-in-out infinite;
+}
+.dev-port-identity { display: grid; gap: 8px; padding-right: 18px; }
+.dev-port-number {
+  display: inline-flex; align-items: baseline; gap: 7px; color: var(--accent);
+  font-family: var(--font-mono); font-size: 1.35rem; font-weight: 750; font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em; line-height: 1;
+}
+.dev-port-number small {
+  color: var(--text-faint); font-size: 0.48rem; font-weight: 750; letter-spacing: 0.14em;
+}
+.dev-port-slot.is-free .dev-port-number { color: var(--text-muted); }
+.dev-port-slot.is-conflict .dev-port-number { color: var(--danger-strong); }
+.dev-port-role {
+  color: var(--text-muted); font-family: var(--font-mono); font-size: 0.5rem; font-weight: 750;
+  letter-spacing: 0.14em; text-transform: uppercase;
+}
+.dev-port-detail { display: grid; align-content: end; gap: 5px; min-width: 0; }
+.dev-port-detail strong {
+  overflow: hidden; color: var(--text); font-size: 0.72rem; font-weight: 750;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.dev-port-slot.is-free .dev-port-detail strong {
+  color: var(--text-faint); font-family: var(--font-mono); font-size: 0.62rem;
+  font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+}
+.dev-port-detail small {
+  overflow: hidden; color: var(--text-faint); font-family: var(--font-mono); font-size: 0.5rem;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+@keyframes port-led-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.72; transform: scale(0.92); }
+}
+
 .process-section { padding-top: 34px; }
 .workspace-heading {
   display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 13px;
@@ -368,6 +464,7 @@ code {
   .summary-metric:nth-child(3) { border-left: 0; border-top: 1px solid var(--border); }
   .summary-metric:nth-child(4) { border-top: 1px solid var(--border); }
   .project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dev-port-slots { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 760px) {
@@ -399,6 +496,8 @@ code {
   .process-toolbar { width: 100%; }
   .showing-count { justify-self: end; }
   .project-grid { grid-template-columns: 1fr; }
+  .dev-port-bay-head { display: grid; gap: 10px; }
+  .dev-port-slots { grid-template-columns: 1fr 1fr; }
   .port-map-layout { grid-template-columns: 1fr; }
   .port-map { grid-template-columns: 1fr; gap: 24px; padding: 20px; }
   .host-node::after, .port-node::before { display: none; }

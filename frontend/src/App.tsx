@@ -9,10 +9,11 @@ import {
 } from './components/DashboardChrome';
 import type { ViewMode } from './components/DashboardChrome';
 import { ConfirmStopDialog } from './components/ConfirmStopDialog';
+import { DevPortBay } from './components/DevPortBay';
 import { PortMap } from './components/PortMap';
 import { ProcessTable } from './components/ProcessTable';
 import { ProjectCards } from './components/ProjectCards';
-import { buildRenderGroups, filterProcesses } from './processUtils';
+import { buildDevPortSlots, buildRenderGroups, filterProcesses } from './processUtils';
 import type { ProcessInfo, ProcessListResponse, ProcessSummary } from './types';
 
 const EMPTY_SUMMARY: ProcessSummary = {
@@ -155,6 +156,10 @@ function App() {
     () => new Set((data.port_conflicts ?? []).map((conflict) => conflict.port)),
     [data.port_conflicts],
   );
+  const devPortSlots = useMemo(
+    () => buildDevPortSlots(data.processes, data.port_conflicts),
+    [data.processes, data.port_conflicts],
+  );
 
   const hasData = data.processes.length > 0;
   const isStale = Boolean(error) && hasData;
@@ -202,6 +207,13 @@ function App() {
           />
           <SummaryBand summary={data.summary} isOnline={wsConnected || hasData} />
         </section>
+        <DevPortBay
+          slots={devPortSlots}
+          onStop={(process) => {
+            setStopError(null);
+            setSelectedProcess(process);
+          }}
+        />
         <section id="workspace" className="process-section" aria-label="Processes">
           <WorkspaceHeader mode={viewMode} onModeChange={setViewMode} />
           <ProcessToolbar query={query} showing={visibleProcesses.length} total={data.processes.length} onQueryChange={setQuery} />

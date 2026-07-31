@@ -95,9 +95,14 @@ describe('App', () => {
     await screen.findByText('No development processes detected.');
 
     expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('href', '#overview');
+    expect(screen.getByRole('link', { name: 'Dev ports' })).toHaveAttribute('href', '#dev-ports');
     expect(screen.getByRole('link', { name: 'Processes' })).toHaveAttribute('href', '#workspace');
-    expect(screen.getByRole('link', { name: 'Ports' })).toHaveAttribute('href', '#workspace');
 
+    expect(screen.getByRole('heading', { name: 'Common dev ports' })).toBeInTheDocument();
+    const portBay = screen.getByRole('region', { name: 'Common development ports' });
+    expect(within(portBay).getByText('0')).toBeInTheDocument();
+    expect(within(portBay).getByText(/of 4 claimed/i)).toBeInTheDocument();
+    expect(within(portBay).getAllByText('available')).toHaveLength(4);
     const compactButton = screen.getByRole('button', { name: 'Compact' });
     await user.click(compactButton);
 
@@ -112,6 +117,12 @@ describe('App', () => {
     render(<App />);
     expect(await screen.findByText('npm run dev')).toBeInTheDocument();
 
+    const portBay = screen.getByRole('region', { name: 'Common development ports' });
+    expect(within(portBay).getByText('2')).toBeInTheDocument();
+    expect(within(portBay).getByRole('button', { name: /TCP 5173 node/i })).toBeInTheDocument();
+    expect(within(portBay).getByRole('button', { name: /TCP 8000 python/i })).toBeInTheDocument();
+    expect(within(portBay).getAllByText('available')).toHaveLength(2);
+
     await user.click(screen.getByRole('tab', { name: 'Project cards' }));
     expect(screen.getByRole('heading', { name: 'See services in their project context' })).toBeInTheDocument();
     expect(screen.getByText('/workspace/frontend')).toBeInTheDocument();
@@ -119,6 +130,19 @@ describe('App', () => {
     await user.click(screen.getByRole('tab', { name: 'Port map' }));
     expect(screen.getByRole('heading', { name: 'Follow ports back to their owners' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /5173 frontend node/i })).toBeInTheDocument();
+  });
+
+  test('opens stop confirmation from an occupied port bay slot', async () => {
+    const user = userEvent.setup();
+    mockFetch(populatedResponse);
+
+    render(<App />);
+    expect(await screen.findByText('npm run dev')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /TCP 5173 node/i }));
+    const dialog = screen.getByRole('dialog', { name: 'Stop process?' });
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByText(/PID 101/i)).toBeInTheDocument();
   });
 
   test('renders loading and then empty state', async () => {

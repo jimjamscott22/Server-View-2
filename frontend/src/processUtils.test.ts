@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildRenderGroups } from './processUtils';
+import { buildDevPortSlots, buildRenderGroups, COMMON_DEV_PORTS } from './processUtils';
 import type { ProcessInfo } from './types';
 
 function makeProcess(overrides: Partial<ProcessInfo> & { pid: number }): ProcessInfo {
@@ -68,5 +68,47 @@ describe('buildRenderGroups', () => {
     });
 
     expect(buildRenderGroups([process])[0].label).toBe('frontend');
+  });
+});
+
+describe('buildDevPortSlots', () => {
+  test('returns a fixed slot for every common port including free ones', () => {
+    const slots = buildDevPortSlots([]);
+
+    expect(slots.map((slot) => slot.port)).toEqual([...COMMON_DEV_PORTS]);
+    expect(slots.every((slot) => slot.process === null)).toBe(true);
+    expect(slots.every((slot) => !slot.conflict)).toBe(true);
+  });
+
+  test('maps occupants and project labels for claimed ports', () => {
+    const vite = makeProcess({ pid: 10, name: 'node', cwd: '/work/frontend', ports: [5173] });
+    const api = makeProcess({ pid: 20, name: 'uvicorn', cwd: '/work/backend', ports: [8000] });
+    const slots = buildDevPortSlots([vite, api]);
+
+    const byPort = Object.fromEntries(slots.map((slot) => [slot.port, slot]));
+    expect(byPort[5173].process?.pid).toBe(10);
+    expect(byPort[5173].projectLabel).toBe('frontend');
+    expect(byPort[5173].role).toBe('Vite');
+    expect(byPort[8000].process?.pid).toBe(20);
+    expect(byPort[8000].projectLabel).toBe('backend');
+    expect(byPort[3000].process).toBeNull();
+    expect(byPort[3006].process).toBeNull();
+  });
+
+  test('flags conflicts from API conflicts or multiple owners', () => {
+    const a = makeProcess({ pid: 1, cwd: '/a', ports: [3000] });
+    const b = makeProcess({ pid: 2, cwd: '/b', ports: [3000] });
+    const multi = buildDevPortSlots([a, b]);
+    expect(multi.find((slot) => slot.port === 3000)?.conflict).toBe(true);
+    expect(multi.find((slot) => slot.port === 3000)?.owners).toHaveLength(2);
+
+    const flagged = buildDevPortSlots([a], [{ port: 3000, pids: [1, 99] }]);
+    expect(flagged.find((slot) => slot.port === 3000)?.conflict).toBe(true);
+  });
+
+  test('ignores processes on non-common ports', () => {
+    const other = makeProcess({ pid: 3, ports: [5178, 8080] });
+    const slots = buildDevPortSlots([other]);
+    expect(slots.every((slot) => slot.process === null)).toBe(true);
   });
 });
