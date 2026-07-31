@@ -10,6 +10,7 @@ import {
   Search,
 } from 'lucide-react';
 import type { ChangeEvent, ReactNode } from 'react';
+import { COMMON_DEV_PORTS } from '../processUtils';
 import type { ProcessSummary } from '../types';
 
 export type ViewMode = 'table' | 'cards' | 'ports';
@@ -26,6 +27,10 @@ export function AppNavigation({
   summary: ProcessSummary;
   isOnline: boolean;
 }) {
+  const commonPortCount = summary.active_ports.filter((port) =>
+    (COMMON_DEV_PORTS as readonly number[]).includes(port),
+  ).length;
+
   const navItems: Array<{
     href: string;
     label: string;
@@ -33,8 +38,8 @@ export function AppNavigation({
     count?: number;
   }> = [
     { href: '#overview', label: 'Overview', Icon: House },
+    { href: '#dev-ports', label: 'Dev ports', Icon: Network, count: commonPortCount },
     { href: '#workspace', label: 'Processes', Icon: Layers3, count: summary.process_count },
-    { href: '#workspace', label: 'Ports', Icon: Network, count: summary.active_ports.length },
   ];
 
   return (

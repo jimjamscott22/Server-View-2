@@ -1,4 +1,28 @@
-import type { ProcessInfo } from './types';
+import type { PortConflict, ProcessInfo } from './types';
+
+/** Common local-dev ports surfaced in the always-visible port bay. */
+export const COMMON_DEV_PORTS = [3000, 5173, 8000, 3006] as const;
+
+export type CommonDevPort = (typeof COMMON_DEV_PORTS)[number];
+
+const DEV_PORT_META: Record<CommonDevPort, { role: string; hint: string }> = {
+  3000: { role: 'Next / CRA', hint: 'Frontend' },
+  5173: { role: 'Vite', hint: 'Frontend' },
+  8000: { role: 'API', hint: 'Backend' },
+  3006: { role: 'Custom', hint: 'Tooling' },
+};
+
+export interface DevPortSlot {
+  port: CommonDevPort;
+  role: string;
+  hint: string;
+  /** Processes currently listening on this port (may be >1 on conflict). */
+  owners: ProcessInfo[];
+  conflict: boolean;
+  /** Primary owner for stop actions — first occupant, if any. */
+  process: ProcessInfo | null;
+  projectLabel: string | null;
+}
 
 export interface RenderGroup {
   key: string;
@@ -122,5 +146,43 @@ export function filterProcesses(processes: ProcessInfo[], query: string): Proces
       .join(' ')
       .toLowerCase();
     return searchable.includes(normalized);
+  });
+}
+
+/**
+ * Build fixed occupancy slots for the common-dev-port bay. Free ports still
+ * appear so the bay answers "is :3000 taken?" at a glance.
+ */
+export function buildDevPortSlots(
+  processes: ProcessInfo[],
+  conflicts: PortConflict[] = [],
+): DevPortSlot[] {
+  const conflictPorts = new Set(conflicts.map((c) => c.port));
+  const ownersByPort = new Map<number, ProcessInfo[]>();
+
+  for (const process of processes) {
+    for (const port of process.ports) {
+      if (!(COMMON_DEV_PORTS as readonly number[]).includes(port)) {
+        continue;
+      }
+      const owners = ownersByPort.get(port) ?? [];
+      owners.push(process);
+      ownersByPort.set(port, owners);
+    }
+  }
+
+  return COMMON_DEV_PORTS.map((port) => {
+    const owners = ownersByPort.get(port) ?? [];
+    const process = owners[0] ?? null;
+    const meta = DEV_PORT_META[port];
+    return {
+      port,
+      role: meta.role,
+      hint: meta.hint,
+      owners,
+      conflict: conflictPorts.has(port) || owners.length > 1,
+      process,
+      projectLabel: process ? labelOf(process.cwd) : null,
+    };
   });
 }
