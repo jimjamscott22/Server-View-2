@@ -47,6 +47,42 @@ const populatedResponse: ProcessListResponse = {
   },
 };
 
+const dockerAndDatabaseResponse: ProcessListResponse = {
+  processes: [
+    {
+      pid: 301,
+      name: 'docker-proxy',
+      command: '/usr/bin/docker-proxy -proto tcp -host-port 8080 -container-port 80',
+      cwd: null,
+      ports: [8080],
+      cpu_usage: 0,
+      memory_mb: 4.1,
+      uptime_seconds: 120,
+      status: 'sleeping',
+      started_at: 1700000100,
+      category: 'docker',
+    },
+    {
+      pid: 302,
+      name: 'postgres',
+      command: '/usr/lib/postgresql/16/bin/postgres -D /var/lib/postgresql/16/main',
+      cwd: '/var/lib/postgresql/16/main',
+      ports: [5432],
+      cpu_usage: 0.1,
+      memory_mb: 30.5,
+      uptime_seconds: 600,
+      status: 'sleeping',
+      started_at: 1700000200,
+      category: 'database',
+    },
+  ],
+  summary: {
+    process_count: 2,
+    total_memory_mb: 34.6,
+    active_ports: [5432, 8080],
+  },
+};
+
 function mockFetch(response: ProcessListResponse | Error) {
   const fetchMock = vi.fn(async () => {
     if (response instanceof Error) {
@@ -269,6 +305,52 @@ describe('App', () => {
     // Expanding the group reveals the helper.
     await user.click(screen.getByRole('button', { name: /Expand app helper processes/i }));
     expect(screen.getByText('node esbuild-service')).toBeInTheDocument();
+  });
+
+  test('labels database and Docker processes and only offers Stop for the database', async () => {
+    mockFetch(dockerAndDatabaseResponse);
+
+    render(<App />);
+
+    const proxyRow = (await screen.findByText(/docker-proxy -proto tcp/)).closest('tr') as HTMLElement;
+    expect(within(proxyRow).getByText('Docker')).toBeInTheDocument();
+    expect(within(proxyRow).getByText('Managed by Docker')).toBeInTheDocument();
+    expect(within(proxyRow).queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();
+
+    const dbRow = screen.getByText(/postgresql\/16\/bin\/postgres/).closest('tr') as HTMLElement;
+    expect(within(dbRow).getByText('Database')).toBeInTheDocument();
+    expect(within(dbRow).getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+  });
+
+  test('explains docker stop instead of offering to stop a Docker port owner', async () => {
+    const user = userEvent.setup();
+    const fetchMock = mockFetch(dockerAndDatabaseResponse);
+
+    render(<App />);
+    await screen.findByText(/docker-proxy -proto tcp/);
+
+    await user.click(screen.getByRole('tab', { name: 'Port map' }));
+    await user.click(screen.getByRole('button', { name: /8080 .*docker-proxy/i }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Managed by Docker' });
+    expect(within(dialog).getByText('docker stop')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Stop process' })).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/kill'), expect.anything());
+  });
+
+  test('warns before stopping a database server', async () => {
+    const user = userEvent.setup();
+    mockFetch(dockerAndDatabaseResponse);
+
+    render(<App />);
+    const dbRow = (await screen.findByText(/postgresql\/16\/bin\/postgres/)).closest('tr') as HTMLElement;
+    await user.click(within(dbRow).getByRole('button', { name: 'Stop' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Stop process?' });
+    expect(within(dialog).getByText(/This is a database server/)).toBeInTheDocument();
   });
 
   test('opens confirmation before stop and calls kill only after confirm', async () => {

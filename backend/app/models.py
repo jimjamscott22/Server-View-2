@@ -1,4 +1,11 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+
+# "app": a dev server or tool. "database": a local database server.
+# "docker": a Docker process that owns a port a container publishes.
+ProcessCategory = Literal["app", "database", "docker"]
 
 
 class ProcessInfo(BaseModel):
@@ -14,6 +21,7 @@ class ProcessInfo(BaseModel):
     # Process start time (epoch seconds). Sent back with a stop request so the
     # agent can tell a reused PID from the process the user selected.
     started_at: float = 0.0
+    category: ProcessCategory = "app"
     # Grouping metadata, populated after a scan. Defaults keep ProcessInfo
     # constructible on its own (tests, fixtures) before grouping runs.
     group_key: str = ""

@@ -342,6 +342,10 @@ tbody.group:first-of-type { border-top: 0; }
 }
 .conflict-badge { padding: 3px 8px; }
 .tag-restricted { display: inline-block; margin-top: 6px; padding: 2px 7px; }
+.tag-category {
+  display: inline-block; margin: 6px 6px 0 0; padding: 2px 7px; border: 1px solid var(--border);
+  border-radius: var(--radius-pill); color: var(--text-muted); font-size: 0.56rem; font-weight: 750;
+}
 tr.row-child td:first-child { padding-left: 28px; }
 tr.row-restricted { background: linear-gradient(120deg, transparent, var(--warn-soft)); }
 .process-name { display: inline; font-size: 0.7rem; font-weight: 800; overflow-wrap: anywhere; }
@@ -442,6 +446,8 @@ code {
 .dialog p { color: var(--text-muted); font-size: 0.8rem; line-height: 1.6; }
 .dialog strong { color: var(--text); }
 .dialog .dialog-error { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--danger-border); border-radius: var(--radius-sm); background: var(--danger-soft); color: var(--danger-strong); }
+.dialog .dialog-note { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--warn-border); border-radius: var(--radius-sm); background: var(--warn-soft); color: var(--warn); }
+.dialog p code { display: inline; margin: 0; font-size: 0.74rem; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
 
 .is-compact .summary-metric { min-height: 86px; padding-block: 14px; }
