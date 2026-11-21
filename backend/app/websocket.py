@@ -18,20 +18,31 @@ active_connections: Set[WebSocket] = set()
 # Background task for broadcasting updates
 _broadcast_task: asyncio.Task | None = None
 
+# Most recent serialized scan, sent to newly connected clients so a connect
+# doesn't trigger an extra full scan while the broadcast loop is running.
+_latest_payload: str | None = None
+
+
+async def scan_payload() -> str:
+    """Scan in a worker thread (psutil blocks) and cache the serialized result."""
+    global _latest_payload
+    response = await asyncio.to_thread(scan_processes)
+    _latest_payload = json.dumps(response.model_dump())
+    return _latest_payload
+
 
 async def broadcast_processes():
     """Background task that periodically broadcasts process updates to all connected clients."""
     while True:
         try:
-            # Scan processes
-            response = scan_processes()
-            data = response.model_dump()
-            
-            # Broadcast to all connected clients
+            payload = await scan_payload()
+
+            # Broadcast to all connected clients (iterate a copy: clients can
+            # connect or disconnect while we await each send).
             disconnected = set()
-            for connection in active_connections:
+            for connection in list(active_connections):
                 try:
-                    await connection.send_text(json.dumps(data))
+                    await connection.send_text(payload)
                 except Exception as e:
                     logger.warning(f"Error sending to WebSocket client: {e}")
                     disconnected.add(connection)
@@ -61,11 +72,13 @@ def start_broadcast_task():
 
 def stop_broadcast_task():
     """Stop the background broadcast task."""
-    global _broadcast_task
+    global _broadcast_task, _latest_payload
     if _broadcast_task is not None:
         _broadcast_task.cancel()
         _broadcast_task = None
         logger.info("Stopped WebSocket broadcast task")
+    # Nobody is listening, so the snapshot would only go stale.
+    _latest_payload = None
 
 
 async def websocket_processes(websocket: WebSocket):
@@ -85,9 +98,8 @@ async def websocket_processes(websocket: WebSocket):
     start_broadcast_task()
     
     try:
-        # Send initial data immediately
-        response = scan_processes()
-        await websocket.send_text(json.dumps(response.model_dump()))
+        # Send initial data immediately, reusing the latest broadcast if there is one
+        await websocket.send_text(_latest_payload or await scan_payload())
         
         # Keep connection alive
         while True:

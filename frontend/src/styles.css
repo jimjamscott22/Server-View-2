@@ -433,12 +433,9 @@ code {
 .alert { border: 1px solid var(--danger-border); background: var(--danger-soft); color: var(--danger-strong); }
 .state { border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); }
 .conflict-banner { border: 1px solid var(--warn-border); background: var(--warn-soft); color: var(--warn); font-weight: 700; }
-.dialog-backdrop {
-  position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center;
-  padding: 20px; background: rgba(2, 15, 28, 0.78); backdrop-filter: blur(7px);
-}
+.dialog::backdrop { background: rgba(2, 15, 28, 0.78); backdrop-filter: blur(7px); }
 .dialog {
-  width: min(430px, 100%); padding: 26px; border: 1px solid var(--border); border-top: 3px solid var(--danger);
+  width: min(430px, calc(100% - 40px)); max-width: none; margin: auto; padding: 26px; color: var(--text); border: 1px solid var(--border); border-top: 3px solid var(--danger);
   border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-dialog);
 }
 .dialog h2 { margin-bottom: 10px; font-size: 1.4rem; }

@@ -32,8 +32,10 @@ async def health() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
+# Plain ``def``: psutil calls block, so FastAPI runs this in its thread pool
+# instead of stalling the event loop (WebSocket pushes, stop requests).
 @app.get("/api/processes", response_model=ProcessListResponse)
-async def processes() -> ProcessListResponse:
+def processes() -> ProcessListResponse:
     return scan_processes()
 
 
