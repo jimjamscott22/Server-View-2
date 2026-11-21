@@ -178,7 +178,7 @@ function App() {
     setIsStopping(true);
     setStopError(null);
     try {
-      await killProcess(target.pid);
+      await killProcess(target.pid, target.started_at);
       setSelectedProcess(null);
       // Data will be updated via WebSocket automatically
     } catch (caught) {

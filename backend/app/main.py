@@ -1,15 +1,26 @@
-from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi import Depends, FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from app.models import HealthResponse, KillResponse, ProcessListResponse
-from app.scanner import ProcessAccessDenied, ProcessNotFound, ProcessTerminationError, scan_processes, terminate_process
+from app.models import HealthResponse, KillRequest, KillResponse, ProcessListResponse
+from app.scanner import (
+    ProcessAccessDenied,
+    ProcessChanged,
+    ProcessNotFound,
+    ProcessNotManaged,
+    ProcessTerminationError,
+    scan_processes,
+    terminate_process,
+)
+from app.security import ALLOWED_HOSTS, ALLOWED_ORIGINS, require_dashboard_origin
 from app.websocket import websocket_health, websocket_processes
 
 app = FastAPI(title="Server-View Local Agent")
 
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5178", "http://127.0.0.1:5178"],
+    allow_origins=sorted(ALLOWED_ORIGINS),
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
@@ -21,18 +32,26 @@ async def health() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
+# Plain ``def``: psutil calls block, so FastAPI runs this in its thread pool
+# instead of stalling the event loop (WebSocket pushes, stop requests).
 @app.get("/api/processes", response_model=ProcessListResponse)
-async def processes() -> ProcessListResponse:
+def processes() -> ProcessListResponse:
     return scan_processes()
 
 
-@app.post("/api/processes/{pid}/kill", response_model=KillResponse)
-async def kill_process(pid: int) -> KillResponse:
+@app.post(
+    "/api/processes/{pid}/kill",
+    response_model=KillResponse,
+    dependencies=[Depends(require_dashboard_origin)],
+)
+async def kill_process(pid: int, body: KillRequest) -> KillResponse:
     try:
-        terminate_process(pid)
+        terminate_process(pid, started_at=body.started_at)
     except ProcessNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ProcessAccessDenied as exc:
+    except ProcessChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (ProcessAccessDenied, ProcessNotManaged) as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ProcessTerminationError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

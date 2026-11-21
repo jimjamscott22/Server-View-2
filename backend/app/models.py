@@ -11,6 +11,9 @@ class ProcessInfo(BaseModel):
     memory_mb: float
     uptime_seconds: int
     status: str
+    # Process start time (epoch seconds). Sent back with a stop request so the
+    # agent can tell a reused PID from the process the user selected.
+    started_at: float = 0.0
     # Grouping metadata, populated after a scan. Defaults keep ProcessInfo
     # constructible on its own (tests, fixtures) before grouping runs.
     group_key: str = ""
@@ -61,6 +64,10 @@ class ProcessListResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+
+
+class KillRequest(BaseModel):
+    started_at: float
 
 
 class KillResponse(BaseModel):

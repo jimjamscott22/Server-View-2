@@ -6,8 +6,11 @@ from types import SimpleNamespace
 import psutil
 import pytest
 
+from app import scanner
 from app.models import ProcessInfo
 from app.scanner import (
+    ProcessChanged,
+    ProcessNotManaged,
     build_groups,
     command_tokens,
     detect_port_conflicts,
@@ -405,6 +408,63 @@ def test_detect_port_conflicts_flags_shared_ports_only() -> None:
     assert conflicts[0].pids == [1, 2]
 
 
+class FakePsutilProcess:
+    """Stands in for psutil.Process(pid) in terminate_process tests."""
+
+    def __init__(self, pid: int, *, name: str, cmdline: list[str], create_time: float):
+        self.pid = pid
+        self._create_time = create_time
+        self._attrs = {
+            "pid": pid,
+            "name": name,
+            "cmdline": cmdline,
+            "cwd": "/tmp/app",
+            "cpu_percent": 0.0,
+            "memory_info": None,
+            "create_time": create_time,
+            "status": "running",
+        }
+        self.terminated = False
+
+    def create_time(self) -> float:
+        return self._create_time
+
+    def as_dict(self, attrs: list[str]) -> dict:
+        return {attr: self._attrs.get(attr) for attr in attrs}
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+
+@pytest.fixture
+def no_listening_ports(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(scanner, "listening_ports_by_pid", lambda: {})
+
+
+def install_fake_process(monkeypatch: pytest.MonkeyPatch, process: FakePsutilProcess) -> None:
+    monkeypatch.setattr(psutil, "Process", lambda pid: process)
+
+
+def test_process_to_info_reports_start_time() -> None:
+    process = FakeProcess(
+        {
+            "pid": 42,
+            "name": "node",
+            "cmdline": ["npm", "run", "dev"],
+            "cwd": "/tmp/app",
+            "cpu_percent": 0.0,
+            "memory_info": None,
+            "create_time": 1234.5,
+            "status": "running",
+        }
+    )
+
+    info = process_to_info(process, [], now=2000.0)
+
+    assert info is not None
+    assert info.started_at == 1234.5
+
+
 def test_terminate_process_reports_missing_pid(monkeypatch: pytest.MonkeyPatch) -> None:
     def missing_process(pid: int) -> object:
         raise psutil.NoSuchProcess(pid=pid)
@@ -412,18 +472,47 @@ def test_terminate_process_reports_missing_pid(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(psutil, "Process", missing_process)
 
     with pytest.raises(Exception, match="Process 999 was not found"):
-        terminate_process(999)
+        terminate_process(999, started_at=100.0)
 
 
-def test_terminate_process_calls_terminate(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[str] = []
+def test_terminate_process_terminates_matching_dev_process(
+    monkeypatch: pytest.MonkeyPatch, no_listening_ports: None
+) -> None:
+    process = FakePsutilProcess(123, name="node", cmdline=["npm", "run", "dev"], create_time=100.0)
+    install_fake_process(monkeypatch, process)
 
-    class FakePsutilProcess:
-        def terminate(self) -> None:
-            calls.append("terminate")
+    terminate_process(123, started_at=100.0)
 
-    monkeypatch.setattr(psutil, "Process", lambda pid: FakePsutilProcess())
+    assert process.terminated
 
-    terminate_process(123)
 
-    assert calls == ["terminate"]
+def test_terminate_process_rejects_reused_pid(monkeypatch: pytest.MonkeyPatch, no_listening_ports: None) -> None:
+    # Same PID, but the OS handed it to a new process after the selected one exited.
+    process = FakePsutilProcess(123, name="node", cmdline=["npm", "run", "dev"], create_time=250.0)
+    install_fake_process(monkeypatch, process)
+
+    with pytest.raises(ProcessChanged):
+        terminate_process(123, started_at=100.0)
+
+    assert not process.terminated
+
+
+def test_terminate_process_rejects_non_dev_process(monkeypatch: pytest.MonkeyPatch, no_listening_ports: None) -> None:
+    process = FakePsutilProcess(123, name="code", cmdline=["/usr/share/code/code"], create_time=100.0)
+    install_fake_process(monkeypatch, process)
+
+    with pytest.raises(ProcessNotManaged):
+        terminate_process(123, started_at=100.0)
+
+    assert not process.terminated
+
+
+def test_terminate_process_allows_runtime_detected_by_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A bare `java` runtime only shows on the dashboard because it owns a port.
+    monkeypatch.setattr(scanner, "listening_ports_by_pid", lambda: {123: [8080]})
+    process = FakePsutilProcess(123, name="java", cmdline=["java", "-jar", "app.jar"], create_time=100.0)
+    install_fake_process(monkeypatch, process)
+
+    terminate_process(123, started_at=100.0)
+
+    assert process.terminated

@@ -12,6 +12,7 @@ function makeProcess(overrides: Partial<ProcessInfo> & { pid: number }): Process
     memory_mb: 1,
     uptime_seconds: 0,
     status: 'running',
+    started_at: 0,
     ...overrides,
   };
 }

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import App from './App';
@@ -25,6 +25,7 @@ const populatedResponse: ProcessListResponse = {
       memory_mb: 128.4,
       uptime_seconds: 65,
       status: 'running',
+      started_at: 1700000000.25,
     },
     {
       pid: 202,
@@ -36,6 +37,7 @@ const populatedResponse: ProcessListResponse = {
       memory_mb: 84.2,
       uptime_seconds: 5,
       status: 'sleeping',
+      started_at: 1700000060.5,
     },
   ],
   summary: {
@@ -229,6 +231,7 @@ describe('App', () => {
           memory_mb: 128,
           uptime_seconds: 60,
           status: 'running',
+          started_at: 1700000000,
           group_key: '/work/app',
           is_primary: true,
         },
@@ -242,6 +245,7 @@ describe('App', () => {
           memory_mb: 12,
           uptime_seconds: 60,
           status: 'running',
+          started_at: 1700000000,
           group_key: '/work/app',
           is_primary: false,
         },
@@ -296,7 +300,11 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Stop process' }));
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith('/api/processes/101/kill', { method: 'POST' });
+      expect(fetchMock).toHaveBeenCalledWith('/api/processes/101/kill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ started_at: 1700000000.25 }),
+      });
     });
   });
 
@@ -318,6 +326,40 @@ describe('App', () => {
 
     expect(screen.queryByRole('dialog', { name: 'Stop process?' })).not.toBeInTheDocument();
     expect(processRow).not.toHaveClass('row-selected');
+  });
+
+  test('focuses Cancel when the stop dialog opens and returns focus to Stop when it closes', async () => {
+    const user = userEvent.setup();
+    mockFetch(populatedResponse);
+
+    render(<App />);
+
+    const processRow = (await screen.findByText('npm run dev')).closest('tr') as HTMLElement;
+    const stopButton = within(processRow).getByRole('button', { name: 'Stop' });
+    await user.click(stopButton);
+
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(stopButton).toHaveFocus();
+  });
+
+  test('closes the stop dialog on Escape without stopping the process', async () => {
+    const user = userEvent.setup();
+    const fetchMock = mockFetch(populatedResponse);
+
+    render(<App />);
+
+    const processRow = (await screen.findByText('npm run dev')).closest('tr') as HTMLElement;
+    await user.click(within(processRow).getByRole('button', { name: 'Stop' }));
+    const dialog = screen.getByRole('dialog', { name: 'Stop process?' });
+
+    // Browsers turn Escape on a modal <dialog> into a cancelable `cancel` event; jsdom doesn't.
+    fireEvent(dialog, new Event('cancel', { cancelable: true }));
+
+    expect(screen.queryByRole('dialog', { name: 'Stop process?' })).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith(expect.stringContaining('/kill'), expect.anything());
   });
 
   test('polls every two seconds and cleans up interval on unmount', async () => {
