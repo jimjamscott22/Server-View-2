@@ -79,6 +79,14 @@ class ProcessTerminationError(Exception):
     """Raised when a process exists but could not be terminated."""
 
 
+class ProcessChanged(Exception):
+    """Raised when a PID now belongs to a different process than the one selected."""
+
+
+class ProcessNotManaged(Exception):
+    """Raised when a process is not one the dashboard would list, so it may not be stopped."""
+
+
 def command_to_text(command: CommandLine) -> str:
     if isinstance(command, str):
         return command
@@ -200,6 +208,7 @@ def process_to_info(process: psutil.Process, ports: list[int], now: float | None
         memory_mb=round(rss / 1024 / 1024, 1),
         uptime_seconds=max(0, int(current_time - float(create_time))),
         status=attrs.get("status") or "unknown",
+        started_at=float(create_time),
     )
     return info if has_dev_server_evidence(info) else None
 
@@ -321,11 +330,30 @@ def scan_processes() -> ProcessListResponse:
     )
 
 
-def terminate_process(pid: int) -> None:
+# Start times round-trip through JSON exactly, so any real difference means a
+# different process. The tolerance only absorbs float noise.
+START_TIME_TOLERANCE_SECONDS = 0.01
+
+
+def terminate_process(pid: int, started_at: float) -> None:
+    """Terminate ``pid`` only if it is still the dev process the user selected.
+
+    ``started_at`` is the start time the dashboard showed. A mismatch means the
+    original process exited and the OS reused its PID. The process must also be
+    one the dashboard would list, so this endpoint can't stop arbitrary programs.
+    """
     try:
         process = psutil.Process(pid)
-    except psutil.NoSuchProcess as exc:
+        if abs(process.create_time() - started_at) > START_TIME_TOLERANCE_SECONDS:
+            raise ProcessChanged(f"Process {pid} changed since it was selected. Refresh and try again.")
+        info = process_to_info(process, listening_ports_by_pid().get(pid, []))
+    except (psutil.NoSuchProcess, psutil.ZombieProcess) as exc:
         raise ProcessNotFound(f"Process {pid} was not found") from exc
+    except (psutil.AccessDenied, PermissionError) as exc:
+        raise ProcessAccessDenied(f"Permission denied for process {pid}") from exc
+
+    if info is None:
+        raise ProcessNotManaged(f"Process {pid} is not a detected development process")
 
     try:
         # terminate() is SIGTERM on Unix and TerminateProcess on Windows.

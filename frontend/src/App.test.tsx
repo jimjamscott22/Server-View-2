@@ -25,6 +25,7 @@ const populatedResponse: ProcessListResponse = {
       memory_mb: 128.4,
       uptime_seconds: 65,
       status: 'running',
+      started_at: 1700000000.25,
     },
     {
       pid: 202,
@@ -36,6 +37,7 @@ const populatedResponse: ProcessListResponse = {
       memory_mb: 84.2,
       uptime_seconds: 5,
       status: 'sleeping',
+      started_at: 1700000060.5,
     },
   ],
   summary: {
@@ -229,6 +231,7 @@ describe('App', () => {
           memory_mb: 128,
           uptime_seconds: 60,
           status: 'running',
+          started_at: 1700000000,
           group_key: '/work/app',
           is_primary: true,
         },
@@ -242,6 +245,7 @@ describe('App', () => {
           memory_mb: 12,
           uptime_seconds: 60,
           status: 'running',
+          started_at: 1700000000,
           group_key: '/work/app',
           is_primary: false,
         },
@@ -296,7 +300,11 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Stop process' }));
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith('/api/processes/101/kill', { method: 'POST' });
+      expect(fetchMock).toHaveBeenCalledWith('/api/processes/101/kill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ started_at: 1700000000.25 }),
+      });
     });
   });
 

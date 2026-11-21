@@ -7,7 +7,10 @@ from fastapi.testclient import TestClient
 
 from app import main
 
-client = TestClient(main.app)
+client = TestClient(main.app, base_url="http://127.0.0.1:8008")
+DASHBOARD_HEADERS = {"Origin": "http://127.0.0.1:5178"}
+# TestClient defaults WebSocket URLs to host "testserver", which the Host check rejects.
+WS_BASE = "ws://127.0.0.1:8008"
 
 
 def test_websocket_processes_route_exists():
@@ -20,7 +23,7 @@ def test_websocket_processes_route_exists():
 
 def test_websocket_processes_sends_initial_data():
     """Test that WebSocket sends initial process data."""
-    with client.websocket_connect("/ws/processes") as websocket:
+    with client.websocket_connect(WS_BASE + "/ws/processes", headers=DASHBOARD_HEADERS) as websocket:
         # Should receive initial data
         data = websocket.receive_text()
         parsed = json.loads(data)
@@ -33,7 +36,7 @@ def test_websocket_processes_sends_initial_data():
 
 def test_websocket_health_ping_pong():
     """Test that health WebSocket responds to ping with pong."""
-    with client.websocket_connect("/ws/health") as websocket:
+    with client.websocket_connect(WS_BASE + "/ws/health") as websocket:
         # Send ping
         websocket.send_text("ping")
         
@@ -44,7 +47,7 @@ def test_websocket_health_ping_pong():
 
 def test_websocket_health_echo():
     """Test that health WebSocket echoes other messages."""
-    with client.websocket_connect("/ws/health") as websocket:
+    with client.websocket_connect(WS_BASE + "/ws/health") as websocket:
         # Send a test message
         test_message = "hello world"
         websocket.send_text(test_message)

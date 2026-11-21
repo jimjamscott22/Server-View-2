@@ -26,8 +26,12 @@ export async function fetchProcesses(signal?: AbortSignal): Promise<ProcessListR
   return response.json() as Promise<ProcessListResponse>;
 }
 
-export async function killProcess(pid: number): Promise<KillResponse> {
-  const response = await fetch(`/api/processes/${pid}/kill`, { method: 'POST' });
+export async function killProcess(pid: number, startedAt: number): Promise<KillResponse> {
+  const response = await fetch(`/api/processes/${pid}/kill`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ started_at: startedAt }),
+  });
   if (!response.ok) {
     throw new Error(await parseError(response));
   }

@@ -8,6 +8,7 @@ from typing import Set
 from fastapi import WebSocket, WebSocketDisconnect
 
 from app.scanner import scan_processes
+from app.security import reject_foreign_websocket
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,9 @@ async def websocket_processes(websocket: WebSocket):
     Clients connect to this endpoint to receive periodic process updates
     without needing to poll the API.
     """
+    if await reject_foreign_websocket(websocket):
+        logger.warning("Rejected process WebSocket from origin %r", websocket.headers.get("origin"))
+        return
     await websocket.accept()
     active_connections.add(websocket)
     logger.info(f"WebSocket client connected (total: {len(active_connections)})")

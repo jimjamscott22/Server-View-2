@@ -88,7 +88,7 @@ Since the app is primarily a "view" of the OS, a persistent database is not requ
 | :--- | :--- | :--- |
 | `/api/health` | GET | Returns backend health status. |
 | `/api/processes` | GET | Returns a list of filtered dev processes and their ports. |
-| `/api/processes/{pid}/kill` | POST | Sends `SIGTERM` to the specified PID. |
+| `/api/processes/{pid}/kill` | POST | Body `{"started_at": <epoch seconds>}`. Sends `SIGTERM` only if the PID still has that start time (else `409`) and is a detected dev process (else `403`). Requires the dashboard `Origin`. |
 
 WebSockets, historical logs, and a separate stats endpoint are deferred.
 

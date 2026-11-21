@@ -8,6 +8,8 @@ export interface ProcessInfo {
   memory_mb: number;
   uptime_seconds: number;
   status: string;
+  /** Process start time (epoch seconds); sent with a stop request so the agent can detect a reused PID. */
+  started_at: number;
   /** Working-directory group this process belongs to. */
   group_key?: string;
   /** Owns a port or is its group's representative; helpers are collapsible. */
