@@ -40,10 +40,21 @@ function groupKeyOf(process: ProcessInfo): string {
   if (process.group_key) {
     return process.group_key;
   }
+  if (isDocker(process)) {
+    return DOCKER_GROUP_KEY;
+  }
   if (process.cwd) {
     return process.cwd;
   }
   return `pid:${process.pid}`;
+}
+
+/** Docker port owners share one group; their cwd says nothing about the container's project. */
+const DOCKER_GROUP_KEY = 'docker';
+const DOCKER_LABEL = 'Docker';
+
+function isDocker(process: ProcessInfo): boolean {
+  return process.category === 'docker';
 }
 
 function isPrimary(process: ProcessInfo): boolean {
@@ -85,14 +96,15 @@ export function buildRenderGroups(processes: ProcessInfo[]): RenderGroup[] {
     if (primary.length === 0 && helpers.length > 0) {
       primary.push(helpers.shift()!);
     }
-    const projectPath = members[0].cwd ?? null;
+    const isDockerGroup = members.every(isDocker);
+    const projectPath = isDockerGroup ? null : members[0].cwd ?? null;
     const ports = Array.from(new Set(members.flatMap((member) => member.ports))).sort(
       (a, b) => a - b,
     );
     const totalMemoryMb = Math.round(members.reduce((sum, m) => sum + m.memory_mb, 0) * 10) / 10;
     return {
       key,
-      label: labelOf(projectPath),
+      label: isDockerGroup ? DOCKER_LABEL : labelOf(projectPath),
       projectPath,
       processes: [...primary, ...helpers],
       primaryCount: primary.length,
@@ -180,9 +192,10 @@ export function buildDevPortSlots(
       role: meta.role,
       hint: meta.hint,
       owners,
-      conflict: conflictPorts.has(port) || owners.length > 1,
+      // Docker runs one proxy per address family for a published port; that pair is not a conflict.
+      conflict: conflictPorts.has(port) || (owners.length > 1 && !owners.every(isDocker)),
       process,
-      projectLabel: process ? labelOf(process.cwd) : null,
+      projectLabel: process ? (isDocker(process) ? DOCKER_LABEL : labelOf(process.cwd)) : null,
     };
   });
 }

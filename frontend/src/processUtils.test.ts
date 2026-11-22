@@ -61,6 +61,19 @@ describe('buildRenderGroups', () => {
     expect(groups[1].key).toBe('pid:2');
   });
 
+  test('labels the pooled Docker group "Docker" instead of a proxy cwd', () => {
+    const v4 = makeProcess({ pid: 1, name: 'docker-proxy', cwd: '/', ports: [8080], category: 'docker', group_key: 'docker' });
+    const v6 = makeProcess({ pid: 2, name: 'docker-proxy', cwd: '/', ports: [8080], category: 'docker', group_key: 'docker' });
+    const app = makeProcess({ pid: 3, cwd: '/work/web', ports: [5173], group_key: '/work/web' });
+
+    const groups = buildRenderGroups([v4, v6, app]);
+
+    const docker = groups.find((group) => group.key === 'docker');
+    expect(docker?.label).toBe('Docker');
+    expect(docker?.projectPath).toBeNull();
+    expect(docker?.processes.map((process) => process.pid)).toEqual([1, 2]);
+  });
+
   test('extracts project labels from Windows paths', () => {
     const process = makeProcess({
       pid: 1,
@@ -105,6 +118,18 @@ describe('buildDevPortSlots', () => {
 
     const flagged = buildDevPortSlots([a], [{ port: 3000, pids: [1, 99] }]);
     expect(flagged.find((slot) => slot.port === 3000)?.conflict).toBe(true);
+  });
+
+  test('does not flag the IPv4/IPv6 docker-proxy pair for one port as a conflict', () => {
+    const v4 = makeProcess({ pid: 1, name: 'docker-proxy', cwd: '/', ports: [3000], category: 'docker' });
+    const v6 = makeProcess({ pid: 2, name: 'docker-proxy', cwd: '/', ports: [3000], category: 'docker' });
+
+    const slot = buildDevPortSlots([v4, v6]).find((candidate) => candidate.port === 3000);
+    expect(slot?.conflict).toBe(false);
+    expect(slot?.projectLabel).toBe('Docker');
+
+    const node = makeProcess({ pid: 3, cwd: '/work', ports: [3000] });
+    expect(buildDevPortSlots([v4, v6, node]).find((candidate) => candidate.port === 3000)?.conflict).toBe(true);
   });
 
   test('ignores processes on non-common ports', () => {
