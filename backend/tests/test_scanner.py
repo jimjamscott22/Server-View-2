@@ -516,3 +516,133 @@ def test_terminate_process_allows_runtime_detected_by_port(monkeypatch: pytest.M
     terminate_process(123, started_at=100.0)
 
     assert process.terminated
+
+
+def fake_process(pid: int, name: str, cmdline: list[str], cwd: str | None = "/var/lib/service") -> FakeProcess:
+    return FakeProcess(
+        {
+            "pid": pid,
+            "name": name,
+            "cmdline": cmdline,
+            "cwd": cwd,
+            "cpu_percent": 0.5,
+            "memory_info": SimpleNamespace(rss=1048576),
+            "create_time": 90.0,
+            "status": "sleeping",
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "cmdline"),
+    [
+        ("postgres", ["/usr/lib/postgresql/16/bin/postgres", "-D", "/var/lib/postgresql/16/main"]),
+        ("postgres.exe", ["C:\\Program Files\\PostgreSQL\\16\\bin\\postgres.exe", "-D", "data"]),
+        ("mysqld", ["/usr/sbin/mysqld"]),
+        ("mariadbd", ["/usr/sbin/mariadbd"]),
+        ("redis-server", ["redis-server", "*:6379"]),
+        ("valkey-server", ["valkey-server", "*:6379"]),
+        ("mongod", ["mongod", "--dbpath", "/data/db"]),
+    ],
+)
+def test_detects_database_servers_that_listen_on_a_port(name: str, cmdline: list[str]) -> None:
+    process = fake_process(60, name, cmdline)
+
+    info = process_to_info(process, [5432], now=100.0)
+
+    assert info is not None
+    assert info.category == "database"
+
+
+def test_database_worker_processes_without_a_port_are_skipped() -> None:
+    # Postgres forks a checkpointer, walwriter, etc. Only the postmaster listens.
+    worker = fake_process(61, "postgres", ["postgres: 16/main: checkpointer"])
+
+    assert process_to_info(worker, [], now=100.0) is None
+
+
+@pytest.mark.parametrize(
+    ("name", "cmdline"),
+    [
+        (
+            "docker-proxy",
+            ["/usr/bin/docker-proxy", "-proto", "tcp", "-host-ip", "0.0.0.0", "-host-port", "8080",
+             "-container-ip", "172.17.0.2", "-container-port", "80"],
+        ),
+        ("com.docker.backend", ["/Applications/Docker.app/Contents/MacOS/com.docker.backend"]),
+        ("com.docker.backend.exe", ["C:\\Program Files\\Docker\\Docker\\resources\\com.docker.backend.exe"]),
+        ("vpnkit", ["vpnkit"]),
+        ("rootlesskit", ["rootlesskit", "dockerd"]),
+    ],
+)
+def test_detects_docker_published_ports(name: str, cmdline: list[str]) -> None:
+    process = fake_process(70, name, cmdline, cwd="/")
+
+    assert process_to_info(process, [], now=100.0) is None
+
+    info = process_to_info(process, [8080], now=100.0)
+
+    assert info is not None
+    assert info.category == "docker"
+
+
+def test_app_processes_default_to_app_category() -> None:
+    process = fake_process(71, "node", ["npm", "run", "dev"], cwd="/work/web")
+
+    info = process_to_info(process, [], now=100.0)
+
+    assert info is not None
+    assert info.category == "app"
+
+
+def test_build_groups_pools_docker_port_owners_into_one_group() -> None:
+    proxy_v4 = make_info(80, cwd="/", ports=[8080])
+    proxy_v6 = make_info(81, cwd=None, ports=[8080])
+    app = make_info(82, cwd="/", ports=[3000])
+    proxy_v4.category = proxy_v6.category = "docker"
+
+    groups = build_groups([proxy_v4, proxy_v6, app])
+
+    docker_group = next(group for group in groups if group.key == "docker")
+    assert docker_group.label == "Docker"
+    assert docker_group.pids == [80, 81]
+    assert app.group_key == "/"
+
+
+def test_detect_port_conflicts_ignores_docker_proxy_address_families() -> None:
+    # Docker runs one docker-proxy per address family (0.0.0.0 and ::) for the same port.
+    proxy_v4 = make_info(80, cwd="/", ports=[8080])
+    proxy_v6 = make_info(81, cwd="/", ports=[8080])
+    proxy_v4.category = proxy_v6.category = "docker"
+
+    assert detect_port_conflicts([proxy_v4, proxy_v6]) == []
+
+    node = make_info(82, cwd="/work", ports=[8080])
+    conflicts = detect_port_conflicts([proxy_v4, proxy_v6, node])
+
+    assert [conflict.port for conflict in conflicts] == [8080]
+    assert conflicts[0].pids == [80, 81, 82]
+
+
+def test_terminate_process_refuses_docker_port_owners(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Killing docker-proxy drops the port mapping but leaves the container running.
+    monkeypatch.setattr(scanner, "listening_ports_by_pid", lambda: {123: [8080]})
+    process = FakePsutilProcess(
+        123, name="docker-proxy", cmdline=["/usr/bin/docker-proxy", "-host-port", "8080"], create_time=100.0
+    )
+    install_fake_process(monkeypatch, process)
+
+    with pytest.raises(ProcessNotManaged, match="docker stop"):
+        terminate_process(123, started_at=100.0)
+
+    assert not process.terminated
+
+
+def test_terminate_process_allows_database_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(scanner, "listening_ports_by_pid", lambda: {123: [6379]})
+    process = FakePsutilProcess(123, name="redis-server", cmdline=["redis-server", "*:6379"], create_time=100.0)
+    install_fake_process(monkeypatch, process)
+
+    terminate_process(123, started_at=100.0)
+
+    assert process.terminated

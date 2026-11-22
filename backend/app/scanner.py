@@ -9,7 +9,7 @@ from pathlib import PurePath, PureWindowsPath
 
 import psutil
 
-from app.models import PortConflict, ProcessGroup, ProcessInfo, ProcessListResponse, ProcessSummary
+from app.models import PortConflict, ProcessCategory, ProcessGroup, ProcessInfo, ProcessListResponse, ProcessSummary
 
 
 NODE_RUNTIME_NAMES = {"node", "npm", "npx", "pnpm", "yarn", "bun", "vite", "next"}
@@ -57,10 +57,28 @@ LANGUAGE_DEV_SIGNATURES = (
     *PHP_DEV_SIGNATURES,
 )
 LANGUAGE_RUNTIME_NAMES = {"java", "javaw", "ruby", "php"}
+# Database servers count only while they listen, which keeps the server itself
+# and skips its workers (postgres forks a checkpointer, walwriter, etc.).
+DATABASE_SERVER_NAMES = {
+    "postgres",
+    "postmaster",
+    "mysqld",
+    "mariadbd",
+    "redis-server",
+    "valkey-server",
+    "mongod",
+}
+# Processes that own a port a Docker container publishes: docker-proxy on
+# Linux, the Docker Desktop backend on macOS/Windows, rootlesskit for rootless
+# Docker. Stopping one drops the port mapping but leaves the container running.
+DOCKER_PORT_OWNER_NAMES = {"docker-proxy", "com.docker.backend", "vpnkit", "rootlesskit"}
+DOCKER_GROUP_KEY = "docker"
 PORT_DETECTABLE_RUNTIME_NAMES = (
     NODE_RUNTIME_NAMES
     | PYTHON_RUNTIME_NAMES
     | LANGUAGE_RUNTIME_NAMES
+    | DATABASE_SERVER_NAMES
+    | DOCKER_PORT_OWNER_NAMES
 )
 EXCLUDED_PROCESS_NAMES = {"bwrap", "codex-linux-sandbox"}
 WINDOWS_EXECUTABLE_SUFFIXES = (".exe", ".bat", ".cmd", ".com")
@@ -148,6 +166,15 @@ def is_dev_process(name: str, command: CommandLine) -> bool:
     return False
 
 
+def process_category(name: str) -> ProcessCategory:
+    process_name = executable_name(name)
+    if process_name in DATABASE_SERVER_NAMES:
+        return "database"
+    if process_name in DOCKER_PORT_OWNER_NAMES:
+        return "docker"
+    return "app"
+
+
 def has_dev_server_evidence(info: ProcessInfo) -> bool:
     if info.ports:
         return True
@@ -209,6 +236,7 @@ def process_to_info(process: psutil.Process, ports: list[int], now: float | None
         uptime_seconds=max(0, int(current_time - float(create_time))),
         status=attrs.get("status") or "unknown",
         started_at=float(create_time),
+        category=process_category(name),
     )
     return info if has_dev_server_evidence(info) else None
 
@@ -222,7 +250,10 @@ def project_label(path: str | None) -> str:
 def group_key_for(info: ProcessInfo) -> str:
     """Stable group identity: the working directory when known, otherwise a
     per-PID key so a process with no cwd stands alone instead of pooling with
-    unrelated cwd-less processes."""
+    unrelated cwd-less processes. Docker port owners share one group: their
+    cwd says nothing about which project the container belongs to."""
+    if info.category == "docker":
+        return DOCKER_GROUP_KEY
     if info.cwd:
         return info.cwd
     return f"pid:{info.pid}"
@@ -261,12 +292,13 @@ def build_groups(processes: list[ProcessInfo]) -> list[ProcessGroup]:
         primary_pid = select_primary_pid(members)
         for member in members:
             member.is_primary = bool(member.ports) or member.pid == primary_pid
-        project_path = members[0].cwd
+        is_docker = key == DOCKER_GROUP_KEY
+        project_path = None if is_docker else members[0].cwd
         groups.append(
             ProcessGroup(
                 key=key,
                 project_path=project_path,
-                label=project_label(project_path),
+                label="Docker" if is_docker else project_label(project_path),
                 pids=[member.pid for member in members],
                 ports=sorted({port for member in members for port in member.ports}),
                 process_count=len(members),
@@ -281,17 +313,21 @@ def build_groups(processes: list[ProcessInfo]) -> list[ProcessGroup]:
 
 
 def detect_port_conflicts(processes: list[ProcessInfo]) -> list[PortConflict]:
-    """A conflict is one listening port claimed by more than one process."""
-    pids_by_port: dict[int, list[int]] = {}
+    """A conflict is one listening port claimed by more than one process.
+
+    Docker runs a docker-proxy per address family (0.0.0.0 and ::) for one
+    published port, so a port held only by Docker processes is not a conflict.
+    """
+    owners_by_port: dict[int, list[ProcessInfo]] = {}
     for info in processes:
         for port in info.ports:
-            owners = pids_by_port.setdefault(port, [])
-            if info.pid not in owners:
-                owners.append(info.pid)
+            owners = owners_by_port.setdefault(port, [])
+            if all(owner.pid != info.pid for owner in owners):
+                owners.append(info)
     return [
-        PortConflict(port=port, pids=sorted(pids))
-        for port, pids in sorted(pids_by_port.items())
-        if len(pids) > 1
+        PortConflict(port=port, pids=sorted(owner.pid for owner in owners))
+        for port, owners in sorted(owners_by_port.items())
+        if len(owners) > 1 and any(owner.category != "docker" for owner in owners)
     ]
 
 
@@ -354,6 +390,11 @@ def terminate_process(pid: int, started_at: float) -> None:
 
     if info is None:
         raise ProcessNotManaged(f"Process {pid} is not a detected development process")
+    if info.category == "docker":
+        raise ProcessNotManaged(
+            f"Process {pid} forwards a port for a Docker container. "
+            "Stop the container with `docker stop` instead."
+        )
 
     try:
         # terminate() is SIGTERM on Unix and TerminateProcess on Windows.

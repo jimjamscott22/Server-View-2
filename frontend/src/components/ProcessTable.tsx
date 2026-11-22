@@ -39,6 +39,11 @@ function Ports({ ports, conflictPorts }: { ports: number[]; conflictPorts: Set<n
   );
 }
 
+const CATEGORY_LABELS: Record<string, string> = {
+  database: 'Database',
+  docker: 'Docker',
+};
+
 function ProcessRow({
   process,
   isChild,
@@ -73,6 +78,9 @@ function ProcessRow({
         {isChild ? null : (
           <div className="cwd">{process.cwd ?? 'Working directory unavailable'}</div>
         )}
+        {process.category && CATEGORY_LABELS[process.category] ? (
+          <span className={`tag-category tag-${process.category}`}>{CATEGORY_LABELS[process.category]}</span>
+        ) : null}
         {isRestricted ? <span className="tag-restricted">Limited access</span> : null}
       </td>
       <td className="ports-cell" data-label="Ports"><Ports ports={process.ports} conflictPorts={conflictPorts} /></td>
@@ -81,9 +89,13 @@ function ProcessRow({
       <td className="num uptime-cell" data-label="Uptime">{formatUptime(process.uptime_seconds)}</td>
       <td className="status-cell" data-label="Status"><span className={statusClass(process.status)}>{process.status}</span></td>
       <td className="action-cell" data-label="Action">
-        <button className="danger" type="button" onClick={() => onStop(process)}>
-          Stop
-        </button>
+        {process.category === 'docker' ? (
+          <span className="muted" title="Stop the container with docker stop">Managed by Docker</span>
+        ) : (
+          <button className="danger" type="button" onClick={() => onStop(process)}>
+            Stop
+          </button>
+        )}
         {failedStop ? <div className="stop-error">{failedStop.message}</div> : null}
       </td>
     </tr>

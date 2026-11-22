@@ -72,7 +72,7 @@ cd frontend && npm run build
 ## API
 
 - `GET /api/health`
-- `GET /api/processes` (each process includes `started_at`, its start time in epoch seconds)
+- `GET /api/processes` (each process includes `started_at`, its start time in epoch seconds, and `category`: `app`, `database` or `docker`)
 - `POST /api/processes/{pid}/kill` with body `{"started_at": <number>}`
 - `WS /ws/processes` (pushes the process list every 2 seconds)
 
@@ -81,3 +81,4 @@ cd frontend && npm run build
 - The agent only answers requests whose `Host` is `127.0.0.1` or `localhost`. This blocks DNS-rebinding pages.
 - Stop requests and `/ws/processes` must carry the dashboard's `Origin` (`http://127.0.0.1:5178` or `http://localhost:5178`). Other websites can't stop processes or read the process list. For a manual stop with `curl`, add `-H "Origin: http://127.0.0.1:5178"`.
 - A stop only goes through if the PID still has the `started_at` the dashboard showed (otherwise `409`, because the OS reused the PID) and is a process the dashboard lists (otherwise `403`).
+- Docker port owners (`docker-proxy`, the Docker Desktop backend, `rootlesskit`) are listed but can't be stopped (`403`): stopping one drops the port mapping and leaves the container running. Use `docker stop` instead.

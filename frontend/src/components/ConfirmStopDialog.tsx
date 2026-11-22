@@ -53,6 +53,25 @@ export function ConfirmStopDialog({
     }
   }
 
+  if (process.category === 'docker') {
+    return (
+      <dialog ref={dialogRef} className="dialog" aria-labelledby="stop-title" onCancel={handleCancel}>
+        <h2 id="stop-title">Managed by Docker</h2>
+        <p>
+          <strong>{process.name}</strong> (PID {process.pid}) forwards
+          {process.ports.length > 0 ? ` port ${process.ports.join(', ')}` : ' a port'} to a Docker
+          container. Stopping it would drop the port mapping and leave the container running, so
+          stop the container with <code>docker stop</code> instead.
+        </p>
+        <div className="dialog-actions">
+          <button ref={cancelRef} type="button" onClick={onCancel}>
+            Close
+          </button>
+        </div>
+      </dialog>
+    );
+  }
+
   return (
     <dialog ref={dialogRef} className="dialog" aria-labelledby="stop-title" onCancel={handleCancel}>
       <h2 id="stop-title">Stop process?</h2>
@@ -60,6 +79,12 @@ export function ConfirmStopDialog({
         Stop <strong>{process.name}</strong> with PID {process.pid}? This sends a terminate
         request (SIGTERM on Unix, TerminateProcess on Windows).
       </p>
+      {process.category === 'database' ? (
+        <p className="dialog-note">
+          This is a database server. Clients connected to it will lose their connection, and a
+          system service manager may start it again.
+        </p>
+      ) : null}
       {error ? (
         <p className="dialog-error" role="alert">
           Couldn’t stop the process: {error}

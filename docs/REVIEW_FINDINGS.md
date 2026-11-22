@@ -92,11 +92,12 @@ Server-View-2 is a well-architected, cleanly implemented application for monitor
 - **Status**: 📋 Planned (user's original idea)
 
 #### 3. **Enhanced Process Detection** ✅ **IMPLEMENTED**
-- **Current**: Detects Node.js, Python, Go, Java, Rust, Ruby, and PHP development commands
+- **Current**: Detects Node.js, Python, Go, Java, Rust, Ruby, and PHP development commands, local database servers, and Docker published ports
 - **Scope**: Position-aware exact language-tool signatures plus port-based fallback for generic Java, Ruby, and PHP runtimes
-- **Remaining**: Database and Docker detection remain separate future enhancements
+- **Databases**: `postgres`, `mysqld`, `mariadbd`, `redis-server`, `valkey-server`, and `mongod` are listed while they listen on a port (this skips worker processes such as the Postgres checkpointer). They carry `category: "database"`, and the stop dialog warns that clients will be disconnected
+- **Docker**: `docker-proxy`, `com.docker.backend`, `vpnkit`, and `rootlesskit` are listed while they own a published port. They carry `category: "docker"` and are grouped under "Docker". The agent refuses to stop them (403) and the UI points to `docker stop`. The IPv4 and IPv6 proxies for one port no longer count as a port conflict
 - **Impact**: More comprehensive monitoring coverage without broad keyword false positives
-- **Status**: ✅ Language-toolchain expansion implemented
+- **Status**: ✅ Language-toolchain, database, and Docker detection implemented
 
 #### 4. **Authentication & Security**
 - **Current**: No authentication, CORS allows localhost only
@@ -282,7 +283,7 @@ Server-View-2 is a well-architected, cleanly implemented application for monitor
 ### Immediate (Next 1-2 weeks)
 1. **✅ Implement WebSocket support** - Replace polling with real-time updates ✅ COMPLETED
 2. **Add system tray widget** - Allow background operation (user's original request)
-3. **Enhance process detection** - Add more dev tools to detection list
+3. **✅ Enhance process detection** - Languages, databases, and Docker published ports ✅ COMPLETED
 4. **Add authentication** - Token-based security for API endpoints
 
 ### Short-term (Next 1-2 months)

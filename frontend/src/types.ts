@@ -1,3 +1,5 @@
+export type ProcessCategory = 'app' | 'database' | 'docker';
+
 export interface ProcessInfo {
   pid: number;
   name: string;
@@ -10,6 +12,8 @@ export interface ProcessInfo {
   status: string;
   /** Process start time (epoch seconds); sent with a stop request so the agent can detect a reused PID. */
   started_at: number;
+  /** "database" for local DB servers, "docker" for processes that own a container's published port. */
+  category?: ProcessCategory;
   /** Working-directory group this process belongs to. */
   group_key?: string;
   /** Owns a port or is its group's representative; helpers are collapsible. */
