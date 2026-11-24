@@ -202,3 +202,6 @@ frontend/.vite/
 
 docs/superpowers/*
 .worktrees/
+
+# Local Graphify output
+/.graphify/
