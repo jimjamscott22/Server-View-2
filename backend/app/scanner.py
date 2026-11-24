@@ -375,26 +375,31 @@ def scan_processes() -> ProcessListResponse:
 START_TIME_TOLERANCE_SECONDS = 0.01
 
 
-def normalize_username(username: str) -> str:
-    """Compare account names the same way on every OS.
-
-    Windows reports ``DOMAIN\\user`` and treats names case-insensitively.
-    """
-    return username.rsplit("\\", 1)[-1].casefold()
+def current_uid() -> int | None:
+    """The agent's real user ID on Unix, or None on Windows (which has no UIDs)."""
+    return os.getuid() if hasattr(os, "getuid") else None
 
 
 def current_username() -> str:
-    """The account this agent runs as."""
+    """The account this agent runs as, as psutil reports it (``DOMAIN\\user`` on Windows)."""
     return psutil.Process(os.getpid()).username()
 
 
 def is_owned_by_current_user(process: psutil.Process) -> bool:
+    """Compare exact account identities, never bare names.
+
+    Unix: numeric real UIDs, so two accounts can't match by name.
+    Windows: the full ``DOMAIN\\user`` name, ignoring case as Windows does, so
+    ``WORKSTATION\\Administrator`` and ``CORP\\Administrator`` stay different.
+    """
     try:
-        owner = process.username()
+        uid = current_uid()
+        if uid is not None:
+            return process.uids().real == uid
+        return process.username().casefold() == current_username().casefold()
     except (psutil.AccessDenied, PermissionError, KeyError):
-        # KeyError: the UID has no account name (for example inside containers).
+        # KeyError: the account has no name (for example inside containers).
         return False
-    return normalize_username(owner) == normalize_username(current_username())
 
 
 def terminate_process(pid: int, started_at: float) -> ProcessInfo:
