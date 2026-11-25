@@ -1,18 +1,20 @@
-from fastapi import Depends, FastAPI, HTTPException, WebSocket
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from app import audit
 from app.models import HealthResponse, KillRequest, KillResponse, ProcessListResponse
 from app.scanner import (
     ProcessAccessDenied,
     ProcessChanged,
     ProcessNotFound,
     ProcessNotManaged,
+    ProcessNotOwned,
     ProcessTerminationError,
     scan_processes,
     terminate_process,
 )
-from app.security import ALLOWED_HOSTS, ALLOWED_ORIGINS, require_dashboard_origin
+from app.security import ALLOWED_HOSTS, ALLOWED_ORIGINS, limit_stop_rate, require_dashboard_origin
 from app.websocket import websocket_health, websocket_processes
 
 app = FastAPI(title="Server-View Local Agent")
@@ -39,23 +41,47 @@ def processes() -> ProcessListResponse:
     return scan_processes()
 
 
+# Each stop failure maps to an HTTP status and an audit-log outcome.
+STOP_ERRORS: tuple[tuple[type[Exception], int, str], ...] = (
+    (ProcessNotFound, 404, "not_found"),
+    (ProcessChanged, 409, "changed"),
+    (ProcessAccessDenied, 403, "access_denied"),
+    (ProcessNotManaged, 403, "not_managed"),
+    (ProcessNotOwned, 403, "not_owned"),
+    (ProcessTerminationError, 500, "error"),
+)
+
+
 @app.post(
     "/api/processes/{pid}/kill",
     response_model=KillResponse,
-    dependencies=[Depends(require_dashboard_origin)],
+    # Origin first, so requests from other sites don't use up the rate limit.
+    dependencies=[Depends(require_dashboard_origin), Depends(limit_stop_rate)],
 )
-async def kill_process(pid: int, body: KillRequest) -> KillResponse:
+def kill_process(pid: int, body: KillRequest, request: Request) -> KillResponse:
+    origin = request.headers.get("origin")
     try:
-        terminate_process(pid, started_at=body.started_at)
-    except ProcessNotFound as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ProcessChanged as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except (ProcessAccessDenied, ProcessNotManaged) as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except ProcessTerminationError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        info = terminate_process(pid, started_at=body.started_at)
+    except tuple(error for error, _, _ in STOP_ERRORS) as exc:
+        status_code, outcome = next((code, name) for error, code, name in STOP_ERRORS if isinstance(exc, error))
+        audit.log_stop(
+            pid=pid,
+            started_at=body.started_at,
+            outcome=outcome,
+            status_code=status_code,
+            origin=origin,
+            detail=str(exc),
+        )
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
+    audit.log_stop(
+        pid=pid,
+        started_at=body.started_at,
+        outcome="requested",
+        status_code=200,
+        origin=origin,
+        process=info,
+    )
     return KillResponse(
         pid=pid,
         signal="terminate",

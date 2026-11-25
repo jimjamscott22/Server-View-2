@@ -6,7 +6,7 @@ A lightweight dashboard to monitor and manage local development servers (Vite, N
 - `backend/`: FastAPI local agent using `psutil` for process, port, and resource discovery.
 - `frontend/`: React + TypeScript + Vite dashboard.
 
-The backend is designed for local use and should be bound to `127.0.0.1`. The dashboard polls every 2 seconds and requests process termination only when you confirm Stop (SIGTERM on Unix; TerminateProcess on Windows).
+The backend is designed for local use and should be bound to `127.0.0.1`. The dashboard gets live updates over a WebSocket (falling back to polling every 2 seconds) and requests process termination only when you confirm Stop (SIGTERM on Unix; TerminateProcess on Windows).
 
 ## Prerequisites
 
@@ -82,3 +82,10 @@ cd frontend && npm run build
 - Stop requests and `/ws/processes` must carry the dashboard's `Origin` (`http://127.0.0.1:5178` or `http://localhost:5178`). Other websites can't stop processes or read the process list. For a manual stop with `curl`, add `-H "Origin: http://127.0.0.1:5178"`.
 - A stop only goes through if the PID still has the `started_at` the dashboard showed (otherwise `409`, because the OS reused the PID) and is a process the dashboard lists (otherwise `403`).
 - Docker port owners (`docker-proxy`, the Docker Desktop backend, `rootlesskit`) are listed but can't be stopped (`403`): stopping one drops the port mapping and leaves the container running. Use `docker stop` instead.
+- The agent only stops processes owned by the account it runs as (otherwise `403`). Starting it as root or Administrator does not let it stop other users' servers. If you run the agent under `sudo`, it can no longer stop your own servers, so start it as yourself.
+- The agent accepts at most 10 stop requests per 10 seconds. Anything over that gets `429` with a `Retry-After` header.
+- Every stop request is written to an audit log, one JSON object per line: what was asked, from which `Origin`, the process name, command and folder, and the result (stopped, refused and why, or rate limited). The log rotates at 1 MB and keeps 3 old files. Locations:
+  - Linux: `~/.local/state/server-view/audit.log` (or under `$XDG_STATE_HOME`)
+  - macOS: `~/Library/Logs/Server-View/audit.log`
+  - Windows: `%LOCALAPPDATA%\Server-View\Logs\audit.log`
+  - Set `SERVER_VIEW_AUDIT_LOG` to use another path. If the file can't be written, stops still work and the agent logs a warning.

@@ -84,12 +84,12 @@ Server-View-2 is a well-architected, cleanly implemented application for monitor
 - **Solution**: Implement WebSocket endpoint for push-based updates
 - **Status**: ✅ Selected for immediate implementation
 
-#### 2. **System Tray / Widget Mode** ⭐ **USER REQUESTED**
+#### 2. **System Tray / Widget Mode** ✅ **IMPLEMENTED**
 - **Current**: Requires terminal windows to remain open
 - **Issue**: Not suitable for "keep it running" use case
 - **Impact**: Allows application to run persistently in background
 - **Solution**: Add pystray integration for system tray icon
-- **Status**: 📋 Planned (user's original idea)
+- **Status**: ✅ Implemented (`--tray`, see README)
 
 #### 3. **Enhanced Process Detection** ✅ **IMPLEMENTED**
 - **Current**: Detects Node.js, Python, Go, Java, Rust, Ruby, and PHP development commands, local database servers, and Docker published ports
@@ -99,11 +99,14 @@ Server-View-2 is a well-architected, cleanly implemented application for monitor
 - **Impact**: More comprehensive monitoring coverage without broad keyword false positives
 - **Status**: ✅ Language-toolchain, database, and Docker detection implemented
 
-#### 4. **Authentication & Security**
-- **Current**: No authentication, CORS allows localhost only
-- **Issue**: Any process on the machine can send kill requests
-- **Impact**: Security risk, especially on shared systems
-- **Solution**: Add token-based authentication, verify process ownership
+#### 4. **Authentication & Security** ✅ **IMPLEMENTED**
+- **Issue**: Any process on the machine could send kill requests
+- **Request checks**: The agent only answers `Host: 127.0.0.1`/`localhost` (blocks DNS rebinding). Stop requests and `/ws/processes` need the dashboard `Origin`. A stop must carry the process's `started_at` (409 on PID reuse) and target a process the dashboard lists (403)
+- **Ownership**: The agent only stops processes owned by the account it runs as (403 otherwise), so starting it as root or Administrator can't be used to stop other users' servers. It compares numeric user IDs on Unix and full `DOMAIN\user` names on Windows (ignoring case there, as Windows does), so same-named accounts in different domains stay distinct
+- **Rate limiting**: At most 10 stop requests per 10 seconds, then 429 with `Retry-After`. Requests rejected for a foreign `Origin` don't count toward the limit
+- **Audit log**: Every stop request, including refused, foreign-origin, and rate-limited ones, is appended as one JSON line to a rotating per-user log file (path in the README; `SERVER_VIEW_AUDIT_LOG` overrides it)
+- **Token auth: not added.** The agent only listens on localhost. Any program that could read a token would be running as the same user, and that user can already stop their own processes without the agent. The ownership check is what protects other users on a shared machine. Revisit this if the agent ever listens on a network interface
+- **Status**: ✅ Implemented
 
 ### 🟡 Medium Priority
 
@@ -163,7 +166,7 @@ Server-View-2 is a well-architected, cleanly implemented application for monitor
 
 ### Backend
 - [ ] No async support - All endpoints are synchronous
-- [ ] No request rate limiting - Potential for abuse
+- [x] ~~No request rate limiting~~ - Stop requests are rate limited
 - [ ] Limited error logging - Hard to debug issues
 - [ ] No configuration system - Hardcoded values
 - [ ] No health checks beyond basic endpoint
@@ -225,20 +228,20 @@ Server-View-2 is a well-architected, cleanly implemented application for monitor
 ### Current Security Posture
 | Aspect | Status | Risk | Recommendation |
 |--------|--------|------|----------------|
-| API Authentication | ❌ None | High | Add token-based auth |
+| API Authentication | ✅ Host + Origin checks (no token, see #4) | Low | Revisit if the agent ever listens beyond localhost |
 | CORS | ✅ Localhost only | Low | Keep as-is |
-| Process ownership check | ❌ None | High | Verify user can kill process |
-| HTTPS | ❌ None | Medium | Add optional HTTPS |
-| Rate limiting | ❌ None | Medium | Add rate limiting |
+| Process ownership check | ✅ Only the agent user's processes | Low | Keep as-is |
+| HTTPS | ❌ None | Low | Not needed while traffic stays on localhost |
+| Rate limiting | ✅ 10 stops / 10 s | Low | Keep as-is |
 | Input validation | ✅ Good | Low | Maintain |
 | Error handling | ✅ Good | Low | Maintain |
 
 ### Security Recommendations
-1. **Add authentication**: Simple API token or session-based auth
-2. **Verify process ownership**: Only allow killing processes owned by the current user
-3. **Add rate limiting**: Prevent brute force attacks on kill endpoint
-4. **Audit logging**: Log all kill actions for accountability
-5. **HTTPS support**: Add option for encrypted connections
+1. ✅ **Request checks**: Host and Origin checks stand in for a token while the agent is localhost-only (see #4)
+2. ✅ **Verify process ownership**: Only processes owned by the agent's user can be stopped
+3. ✅ **Add rate limiting**: Stop requests are capped at 10 per 10 seconds
+4. ✅ **Audit logging**: Every stop request is logged with its outcome
+5. **HTTPS support**: Only needed if the agent ever listens beyond localhost
 
 ---
 
@@ -282,9 +285,9 @@ Server-View-2 is a well-architected, cleanly implemented application for monitor
 
 ### Immediate (Next 1-2 weeks)
 1. **✅ Implement WebSocket support** - Replace polling with real-time updates ✅ COMPLETED
-2. **Add system tray widget** - Allow background operation (user's original request)
+2. **✅ Add system tray widget** - Allow background operation (user's original request) ✅ COMPLETED
 3. **✅ Enhance process detection** - Languages, databases, and Docker published ports ✅ COMPLETED
-4. **Add authentication** - Token-based security for API endpoints
+4. **✅ Harden the API** - Origin/Host checks, ownership check, rate limiting, audit log ✅ COMPLETED
 
 ### Short-term (Next 1-2 months)
 1. **Performance optimization** - Caching, async scanning, diff-based updates

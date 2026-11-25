@@ -101,6 +101,10 @@ class ProcessChanged(Exception):
     """Raised when a PID now belongs to a different process than the one selected."""
 
 
+class ProcessNotOwned(Exception):
+    """The process belongs to another user account."""
+
+
 class ProcessNotManaged(Exception):
     """Raised when a process is not one the dashboard would list, so it may not be stopped."""
 
@@ -371,18 +375,50 @@ def scan_processes() -> ProcessListResponse:
 START_TIME_TOLERANCE_SECONDS = 0.01
 
 
-def terminate_process(pid: int, started_at: float) -> None:
+def current_uid() -> int | None:
+    """The agent's real user ID on Unix, or None on Windows (which has no UIDs)."""
+    return os.getuid() if hasattr(os, "getuid") else None
+
+
+def current_username() -> str:
+    """The account this agent runs as, as psutil reports it (``DOMAIN\\user`` on Windows)."""
+    return psutil.Process(os.getpid()).username()
+
+
+def is_owned_by_current_user(process: psutil.Process) -> bool:
+    """Compare exact account identities, never bare names.
+
+    Unix: numeric real UIDs, so two accounts can't match by name.
+    Windows: the full ``DOMAIN\\user`` name, ignoring case as Windows does, so
+    ``WORKSTATION\\Administrator`` and ``CORP\\Administrator`` stay different.
+    """
+    try:
+        uid = current_uid()
+        if uid is not None:
+            return process.uids().real == uid
+        return process.username().casefold() == current_username().casefold()
+    except (psutil.AccessDenied, PermissionError, KeyError):
+        # KeyError: the account has no name (for example inside containers).
+        return False
+
+
+def terminate_process(pid: int, started_at: float) -> ProcessInfo:
     """Terminate ``pid`` only if it is still the dev process the user selected.
 
     ``started_at`` is the start time the dashboard showed. A mismatch means the
     original process exited and the OS reused its PID. The process must also be
-    one the dashboard would list, so this endpoint can't stop arbitrary programs.
+    one the dashboard would list, so this endpoint can't stop arbitrary programs,
+    and it must belong to the account the agent runs as, so an agent started
+    with admin rights can't stop other users' servers.
+
+    Returns the process details, for the audit log.
     """
     try:
         process = psutil.Process(pid)
         if abs(process.create_time() - started_at) > START_TIME_TOLERANCE_SECONDS:
             raise ProcessChanged(f"Process {pid} changed since it was selected. Refresh and try again.")
         info = process_to_info(process, listening_ports_by_pid().get(pid, []))
+        owned = is_owned_by_current_user(process)
     except (psutil.NoSuchProcess, psutil.ZombieProcess) as exc:
         raise ProcessNotFound(f"Process {pid} was not found") from exc
     except (psutil.AccessDenied, PermissionError) as exc:
@@ -395,6 +431,8 @@ def terminate_process(pid: int, started_at: float) -> None:
             f"Process {pid} forwards a port for a Docker container. "
             "Stop the container with `docker stop` instead."
         )
+    if not owned:
+        raise ProcessNotOwned(f"Process {pid} belongs to another user. Server-View only stops your own processes.")
 
     try:
         # terminate() is SIGTERM on Unix and TerminateProcess on Windows.
@@ -405,3 +443,5 @@ def terminate_process(pid: int, started_at: float) -> None:
         raise ProcessAccessDenied(f"Permission denied for process {pid}") from exc
     except Exception as exc:  # pragma: no cover - defensive wrapper for OS errors
         raise ProcessTerminationError(f"Could not terminate process {pid}") from exc
+
+    return info

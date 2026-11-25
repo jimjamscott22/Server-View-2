@@ -11,6 +11,7 @@ from app.models import ProcessInfo
 from app.scanner import (
     ProcessChanged,
     ProcessNotManaged,
+    ProcessNotOwned,
     build_groups,
     command_tokens,
     detect_port_conflicts,
@@ -408,11 +409,26 @@ def test_detect_port_conflicts_flags_shared_ports_only() -> None:
     assert conflicts[0].pids == [1, 2]
 
 
+CURRENT_USER = "WORKSTATION\\dev"
+CURRENT_UID = 1000
+
+
 class FakePsutilProcess:
     """Stands in for psutil.Process(pid) in terminate_process tests."""
 
-    def __init__(self, pid: int, *, name: str, cmdline: list[str], create_time: float):
+    def __init__(
+        self,
+        pid: int,
+        *,
+        name: str,
+        cmdline: list[str],
+        create_time: float,
+        username: str | Exception = CURRENT_USER,
+        uid: int | Exception = CURRENT_UID,
+    ):
         self.pid = pid
+        self._username = username
+        self._uid = uid
         self._create_time = create_time
         self._attrs = {
             "pid": pid,
@@ -432,6 +448,16 @@ class FakePsutilProcess:
     def as_dict(self, attrs: list[str]) -> dict:
         return {attr: self._attrs.get(attr) for attr in attrs}
 
+    def uids(self) -> SimpleNamespace:
+        if isinstance(self._uid, Exception):
+            raise self._uid
+        return SimpleNamespace(real=self._uid, effective=self._uid, saved=self._uid)
+
+    def username(self) -> str:
+        if isinstance(self._username, Exception):
+            raise self._username
+        return self._username
+
     def terminate(self) -> None:
         self.terminated = True
 
@@ -443,6 +469,13 @@ def no_listening_ports(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def install_fake_process(monkeypatch: pytest.MonkeyPatch, process: FakePsutilProcess) -> None:
     monkeypatch.setattr(psutil, "Process", lambda pid: process)
+    monkeypatch.setattr(scanner, "current_username", lambda: CURRENT_USER)
+    monkeypatch.setattr(scanner, "current_uid", lambda: CURRENT_UID)
+
+
+def use_windows_accounts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows has no UIDs, so ownership falls back to DOMAIN\\user names. Call after install_fake_process."""
+    monkeypatch.setattr(scanner, "current_uid", lambda: None)
 
 
 def test_process_to_info_reports_start_time() -> None:
@@ -646,3 +679,101 @@ def test_terminate_process_allows_database_server(monkeypatch: pytest.MonkeyPatc
     terminate_process(123, started_at=100.0)
 
     assert process.terminated
+
+
+def test_terminate_process_returns_details_for_audit_log(
+    monkeypatch: pytest.MonkeyPatch, no_listening_ports: None
+) -> None:
+    process = FakePsutilProcess(123, name="node", cmdline=["npm", "run", "dev"], create_time=100.0)
+    install_fake_process(monkeypatch, process)
+
+    info = terminate_process(123, started_at=100.0)
+
+    assert info.name == "node"
+    assert info.command == "npm run dev"
+
+
+def test_terminate_process_refuses_other_users_process(
+    monkeypatch: pytest.MonkeyPatch, no_listening_ports: None
+) -> None:
+    process = FakePsutilProcess(123, name="node", cmdline=["npm", "run", "dev"], create_time=100.0, uid=1001)
+    install_fake_process(monkeypatch, process)
+
+    with pytest.raises(ProcessNotOwned, match="belongs to another user"):
+        terminate_process(123, started_at=100.0)
+
+    assert not process.terminated
+
+
+def test_terminate_process_compares_unix_uids_not_names(
+    monkeypatch: pytest.MonkeyPatch, no_listening_ports: None
+) -> None:
+    # Same name in a different case is a different Unix account; only the UID counts.
+    process = FakePsutilProcess(
+        123, name="node", cmdline=["npm", "run", "dev"], create_time=100.0, username="Dev", uid=1001
+    )
+    install_fake_process(monkeypatch, process)
+
+    with pytest.raises(ProcessNotOwned):
+        terminate_process(123, started_at=100.0)
+
+    assert not process.terminated
+
+
+@pytest.mark.parametrize(
+    "error",
+    [psutil.AccessDenied(pid=123), KeyError("uid 1234 has no account name")],
+    ids=["access-denied", "unknown-account"],
+)
+def test_terminate_process_refuses_process_with_unknown_owner(
+    monkeypatch: pytest.MonkeyPatch, no_listening_ports: None, error: Exception
+) -> None:
+    process = FakePsutilProcess(123, name="node", cmdline=["npm", "run", "dev"], create_time=100.0, username=error)
+    install_fake_process(monkeypatch, process)
+    use_windows_accounts(monkeypatch)
+
+    with pytest.raises(ProcessNotOwned):
+        terminate_process(123, started_at=100.0)
+
+    assert not process.terminated
+
+
+def test_terminate_process_refuses_unreadable_unix_owner(
+    monkeypatch: pytest.MonkeyPatch, no_listening_ports: None
+) -> None:
+    process = FakePsutilProcess(
+        123, name="node", cmdline=["npm", "run", "dev"], create_time=100.0, uid=psutil.AccessDenied(pid=123)
+    )
+    install_fake_process(monkeypatch, process)
+
+    with pytest.raises(ProcessNotOwned):
+        terminate_process(123, started_at=100.0)
+
+
+def test_terminate_process_matches_windows_owner_ignoring_case(
+    monkeypatch: pytest.MonkeyPatch, no_listening_ports: None
+) -> None:
+    process = FakePsutilProcess(
+        123, name="node", cmdline=["npm", "run", "dev"], create_time=100.0, username="workstation\\DEV"
+    )
+    install_fake_process(monkeypatch, process)
+    use_windows_accounts(monkeypatch)
+
+    terminate_process(123, started_at=100.0)
+
+    assert process.terminated
+
+
+def test_terminate_process_refuses_same_name_in_another_windows_domain(
+    monkeypatch: pytest.MonkeyPatch, no_listening_ports: None
+) -> None:
+    process = FakePsutilProcess(
+        123, name="node", cmdline=["npm", "run", "dev"], create_time=100.0, username="CORP\\dev"
+    )
+    install_fake_process(monkeypatch, process)
+    use_windows_accounts(monkeypatch)
+
+    with pytest.raises(ProcessNotOwned):
+        terminate_process(123, started_at=100.0)
+
+    assert not process.terminated
