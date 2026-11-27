@@ -98,6 +98,19 @@ function mockFetch(response: ProcessListResponse | Error) {
   return fetchMock;
 }
 
+/**
+ * Answer the activity panel's history requests with an empty list and pass
+ * every other request to `processFetch`, so tests can count and order those.
+ */
+function stubFetchExceptHistory<T extends (url: string, init?: RequestInit) => unknown>(processFetch: T): T {
+  vi.stubGlobal('fetch', (url: string, init?: RequestInit) =>
+    url.startsWith('/api/history')
+      ? Promise.resolve({ ok: true, json: async () => ({ events: [] }) } as Response)
+      : processFetch(url, init),
+  );
+  return processFetch;
+}
+
 /** Keep tests on the HTTP polling path; a real WebSocket overwrites fetch errors. */
 class SilentWebSocket {
   static CONNECTING = 0;
@@ -209,7 +222,7 @@ describe('App', () => {
         json: async () => populatedResponse,
       } as Response)
       .mockRejectedValueOnce(new Error('Backend unavailable'));
-    vi.stubGlobal('fetch', fetchMock);
+    stubFetchExceptHistory(fetchMock);
 
     render(<App />);
 
@@ -369,7 +382,7 @@ describe('App', () => {
         ok: true,
         json: async () => emptyResponse,
       } as Response);
-    vi.stubGlobal('fetch', fetchMock);
+    stubFetchExceptHistory(fetchMock);
 
     render(<App />);
 
@@ -459,5 +472,182 @@ describe('App', () => {
     const callsBeforeUnmountTick = fetchMock.mock.calls.length;
     await vi.advanceTimersByTimeAsync(2000);
     expect(fetchMock).toHaveBeenCalledTimes(callsBeforeUnmountTick);
+  });
+
+  describe('bulk stop', () => {
+    function routes(stopResponse: unknown | Error = { results: [] }) {
+      const calls: Array<{ url: string; body?: unknown }> = [];
+      vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+        calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+        if (url === '/api/processes/stop') {
+          if (stopResponse instanceof Error) {
+            return { ok: false, statusText: 'Too Many Requests', json: async () => ({ detail: stopResponse.message }) } as Response;
+          }
+          return { ok: true, json: async () => stopResponse } as Response;
+        }
+        if (url.startsWith('/api/history')) {
+          return { ok: true, json: async () => ({ events: [] }) } as Response;
+        }
+        return { ok: true, json: async () => populatedResponse } as Response;
+      });
+      return calls;
+    }
+
+    test('stops every ticked process in one request', async () => {
+      const user = userEvent.setup();
+      const calls = routes({
+        results: [
+          { pid: 101, status: 'requested', http_status: 200, message: 'ok' },
+          { pid: 202, status: 'requested', http_status: 200, message: 'ok' },
+        ],
+      });
+      render(<App />);
+      await screen.findByText('npm run dev');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select node (PID 101)' }));
+      await user.click(screen.getByRole('checkbox', { name: 'Select python (PID 202)' }));
+      const bar = screen.getByRole('region', { name: 'Selected processes' });
+      expect(within(bar).getByText('2')).toBeInTheDocument();
+
+      await user.click(within(bar).getByRole('button', { name: 'Stop selected' }));
+      const dialog = screen.getByRole('dialog', { name: 'Stop 2 processes?' });
+      expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+      expect(calls.some((call) => call.url === '/api/processes/stop')).toBe(false);
+
+      await user.click(within(dialog).getByRole('button', { name: 'Stop 2 processes' }));
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(calls.find((call) => call.url === '/api/processes/stop')?.body).toEqual({
+        targets: [
+          { pid: 101, started_at: 1700000000.25 },
+          { pid: 202, started_at: 1700000060.5 },
+        ],
+      });
+      expect(screen.queryByRole('region', { name: 'Selected processes' })).not.toBeInTheDocument();
+    });
+
+    test('keeps failed processes in the dialog with their reasons', async () => {
+      const user = userEvent.setup();
+      routes({
+        results: [
+          { pid: 101, status: 'requested', http_status: 200, message: 'ok' },
+          { pid: 202, status: 'failed', http_status: 403, message: 'Process 202 belongs to another user.' },
+        ],
+      });
+      render(<App />);
+      await screen.findByText('npm run dev');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select all shown processes' }));
+      await user.click(screen.getByRole('button', { name: 'Stop selected' }));
+      await user.click(screen.getByRole('button', { name: 'Stop 2 processes' }));
+
+      const dialog = await screen.findByRole('dialog', { name: '1 process didn’t stop' });
+      expect(within(dialog).getByText('Process 202 belongs to another user.')).toBeInTheDocument();
+      expect(within(dialog).queryByText('PID 101')).not.toBeInTheDocument();
+      // The stopped one is unticked; the failed one stays ticked for another try.
+      expect(screen.getByRole('checkbox', { name: 'Select node (PID 101)' })).not.toBeChecked();
+      expect(screen.getByRole('checkbox', { name: 'Select python (PID 202)' })).toBeChecked();
+    });
+
+    test('shows a request-level error such as the rate limit', async () => {
+      const user = userEvent.setup();
+      routes(new Error('Too many stop requests. Try again in 4 seconds.'));
+      render(<App />);
+      await screen.findByText('npm run dev');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select node (PID 101)' }));
+      await user.click(screen.getByRole('button', { name: 'Stop selected' }));
+      await user.click(screen.getByRole('button', { name: 'Stop 1 process' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Too many stop requests. Try again in 4 seconds.');
+    });
+
+    test('select all skips Docker port owners', async () => {
+      const user = userEvent.setup();
+      mockFetch(dockerAndDatabaseResponse);
+      render(<App />);
+      await screen.findByText('postgres');
+
+      expect(screen.queryByRole('checkbox', { name: /docker-proxy/ })).not.toBeInTheDocument();
+      await user.click(screen.getByRole('checkbox', { name: 'Select all shown processes' }));
+
+      expect(screen.getByRole('checkbox', { name: 'Select postgres (PID 302)' })).toBeChecked();
+      await user.click(screen.getByRole('button', { name: 'Stop selected' }));
+      const dialog = screen.getByRole('dialog', { name: 'Stop 1 process?' });
+      expect(within(dialog).getByText(/database server/)).toBeInTheDocument();
+    });
+  });
+
+  describe('resource alerts', () => {
+    afterEach(() => window.localStorage.clear());
+
+    test('flags a process over the limit and highlights its row', async () => {
+      window.localStorage.setItem(
+        'server-view.alert-settings',
+        JSON.stringify({ enabled: true, cpuPercent: 1, memoryMb: 100000, sustainUpdates: 1 }),
+      );
+      mockFetch(populatedResponse);
+      render(<App />);
+
+      expect(await screen.findByText('node (PID 101) is using 1% CPU (limit 1%)')).toBeInTheDocument();
+      expect(screen.queryByText(/python \(PID 202\)/)).not.toBeInTheDocument();
+      const row = screen.getByText('npm run dev').closest('tr') as HTMLElement;
+      expect(row).toHaveClass('row-alert');
+      expect(row.querySelector('.cpu-cell')).toHaveClass('is-over-limit');
+    });
+
+    test('saves edited limits', async () => {
+      const user = userEvent.setup();
+      mockFetch(emptyResponse);
+      render(<App />);
+      await screen.findByText('No development processes detected.');
+
+      await user.click(screen.getByRole('button', { name: 'Alert settings' }));
+      const form = screen.getByRole('form', { name: 'Alert settings' });
+      const cpu = within(form).getByLabelText('CPU above (%)');
+      await user.clear(cpu);
+      await user.type(cpu, '150');
+      await user.click(within(form).getByRole('button', { name: 'Save' }));
+
+      expect(screen.getByText('Alerts at 150% CPU or 1024 MB for 6s')).toBeInTheDocument();
+      expect(JSON.parse(window.localStorage.getItem('server-view.alert-settings') ?? '{}')).toMatchObject({ cpuPercent: 150 });
+    });
+  });
+
+  test('lists recent starts and stops from the agent history', async () => {
+    const now = Date.now() / 1000;
+    vi.stubGlobal('fetch', async (url: string) => ({
+      ok: true,
+      json: async () =>
+        url.startsWith('/api/history/events')
+          ? {
+              events: [
+                { time: now - 120, kind: 'stopped', pid: 9, started_at: now - 600, name: 'vite', command: 'npx vite', cwd: '/work/shop', ports: [5173], category: 'app' },
+                { time: now - 600, kind: 'started', pid: 9, started_at: now - 600, name: 'vite', command: 'npx vite', cwd: '/work/shop', ports: [5173], category: 'app' },
+              ],
+            }
+          : emptyResponse,
+    }));
+
+    render(<App />);
+
+    const panel = screen.getByRole('region', { name: 'Recent activity' });
+    const items = await within(panel).findAllByRole('listitem');
+    expect(items[0]).toHaveTextContent('vite stopped on :5173 · shop');
+    expect(items[0]).toHaveTextContent('2 min ago');
+    expect(items[1]).toHaveTextContent('vite started on :5173');
+    expect(screen.getByRole('link', { name: 'Activity' })).toHaveAttribute('href', '#activity');
+  });
+
+  test('explains when history is unavailable', async () => {
+    vi.stubGlobal('fetch', async (url: string) =>
+      url.startsWith('/api/history')
+        ? ({ ok: false, statusText: 'Service Unavailable', json: async () => ({ detail: 'Process history is unavailable.' }) } as Response)
+        : ({ ok: true, json: async () => emptyResponse } as Response),
+    );
+
+    render(<App />);
+
+    expect(await screen.findByText('History unavailable: Process history is unavailable.')).toBeInTheDocument();
   });
 });

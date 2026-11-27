@@ -74,7 +74,25 @@ cd frontend && npm run build
 - `GET /api/health`
 - `GET /api/processes` (each process includes `started_at`, its start time in epoch seconds, and `category`: `app`, `database` or `docker`)
 - `POST /api/processes/{pid}/kill` with body `{"started_at": <number>}`
+- `POST /api/processes/stop` with body `{"targets": [{"pid": <number>, "started_at": <number>}, ...]}` (1 to 25 processes). Returns one result per process: `status` is `requested` or `failed`, with `http_status` and `message`. Each process gets the same checks and its own audit-log line as a single stop. The whole request counts once toward the rate limit.
+- `GET /api/history/events?limit=50`: recent process starts and stops, newest first (up to 500)
+- `GET /api/history/samples?pid=<pid>&started_at=<number>&minutes=60`: CPU and memory samples for one process (one every 30 seconds)
 - `WS /ws/processes` (pushes the process list every 2 seconds)
+
+REST, WebSocket and the history recorder share one scan of the machine: a scan less than a second old is reused rather than repeated. Repeat scans also skip processes already known not to be dev servers.
+
+### Process history
+
+The agent keeps a small SQLite database of when dev servers started and stopped, plus a CPU and memory sample for each one every 30 seconds. The dashboard shows it under **Recent activity**. It records while the agent runs, even with no dashboard open, and deletes rows older than 7 days. Locations:
+
+- Linux: `~/.local/state/server-view/history.db` (or under `$XDG_STATE_HOME`)
+- macOS: `~/Library/Application Support/Server-View/history.db`
+- Windows: `%LOCALAPPDATA%\Server-View\history.db`
+- Set `SERVER_VIEW_HISTORY_DB` to use another path. If the database can't be opened, the agent logs a warning and the history endpoints return `503`. Everything else keeps working.
+
+### Resource alerts
+
+The dashboard flags a process that stays over a CPU or memory limit (default: 80% CPU or 1024 MB for 6 seconds). The alert appears in a banner and highlights the row. Change the limits, or turn alerts off, under **Alert settings**. Settings are saved in that browser.
 
 ### Local-only safety checks
 

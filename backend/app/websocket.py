@@ -7,7 +7,7 @@ from typing import Set
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from app.scanner import scan_processes
+from app.snapshot import scan_cache
 from app.security import reject_foreign_websocket
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ _latest_payload: str | None = None
 async def scan_payload() -> str:
     """Scan in a worker thread (psutil blocks) and cache the serialized result."""
     global _latest_payload
-    response = await asyncio.to_thread(scan_processes)
+    response = await asyncio.to_thread(scan_cache.get)
     _latest_payload = json.dumps(response.model_dump())
     return _latest_payload
 

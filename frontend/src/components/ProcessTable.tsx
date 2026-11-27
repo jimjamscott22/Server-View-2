@@ -1,4 +1,6 @@
 import { ChevronDown, ChevronRight, Folder } from 'lucide-react';
+import { useEffect, useRef } from 'react';
+import type { AlertKind } from '../alerts';
 import { formatUptime } from '../processUtils';
 import type { RenderGroup } from '../processUtils';
 import type { ProcessInfo } from '../types';
@@ -39,6 +41,11 @@ function Ports({ ports, conflictPorts }: { ports: number[]; conflictPorts: Set<n
   );
 }
 
+/** Docker port owners can't be stopped, so they can't be selected for a bulk stop either. */
+export function isStoppable(process: ProcessInfo): boolean {
+  return process.category !== 'docker';
+}
+
 const CATEGORY_LABELS: Record<string, string> = {
   database: 'Database',
   docker: 'Docker',
@@ -48,16 +55,22 @@ function ProcessRow({
   process,
   isChild,
   isSelected,
+  isChecked,
+  alertKinds,
   conflictPorts,
   stopError,
   onStop,
+  onToggleCheck,
 }: {
   process: ProcessInfo;
   isChild: boolean;
   isSelected: boolean;
+  isChecked: boolean;
+  alertKinds: Set<AlertKind> | undefined;
   conflictPorts: Set<number>;
   stopError: StopError | null;
   onStop: (process: ProcessInfo) => void;
+  onToggleCheck: (process: ProcessInfo) => void;
 }) {
   const isRestricted = !process.command && !process.cwd;
   const failedStop = stopError?.pid === process.pid ? stopError : null;
@@ -65,12 +78,24 @@ function ProcessRow({
     isChild ? 'row-child' : '',
     isRestricted ? 'row-restricted' : '',
     isSelected ? 'row-selected' : '',
+    isChecked ? 'row-checked' : '',
+    alertKinds?.size ? 'row-alert' : '',
   ]
     .filter(Boolean)
     .join(' ');
 
   return (
     <tr className={rowClass || undefined}>
+      <td className="select-cell">
+        {isStoppable(process) ? (
+          <input
+            type="checkbox"
+            checked={isChecked}
+            onChange={() => onToggleCheck(process)}
+            aria-label={`Select ${process.name} (PID ${process.pid})`}
+          />
+        ) : null}
+      </td>
       <td className="process-cell">
         <div className="process-name">{process.name}</div>
         <div className="process-meta">PID {process.pid}</div>
@@ -84,8 +109,12 @@ function ProcessRow({
         {isRestricted ? <span className="tag-restricted">Limited access</span> : null}
       </td>
       <td className="ports-cell" data-label="Ports"><Ports ports={process.ports} conflictPorts={conflictPorts} /></td>
-      <td className="num cpu-cell" data-label="CPU">{process.cpu_usage.toFixed(1)}%</td>
-      <td className="num memory-cell" data-label="Memory">{process.memory_mb.toFixed(1)} MB</td>
+      <td className={`num cpu-cell${alertKinds?.has('cpu') ? ' is-over-limit' : ''}`} data-label="CPU">
+        {process.cpu_usage.toFixed(1)}%
+      </td>
+      <td className={`num memory-cell${alertKinds?.has('memory') ? ' is-over-limit' : ''}`} data-label="Memory">
+        {process.memory_mb.toFixed(1)} MB
+      </td>
       <td className="num uptime-cell" data-label="Uptime">{formatUptime(process.uptime_seconds)}</td>
       <td className="status-cell" data-label="Status"><span className={statusClass(process.status)}>{process.status}</span></td>
       <td className="action-cell" data-label="Action">
@@ -117,7 +146,7 @@ function GroupHeader({
 
   return (
     <tr className="group-row">
-      <td colSpan={7}>
+      <td colSpan={8}>
         <div className="group-head">
           <button
             type="button"
@@ -149,6 +178,38 @@ function GroupHeader({
   );
 }
 
+function SelectAllCheckbox({
+  selectable,
+  checkedPids,
+  onSetChecked,
+}: {
+  selectable: ProcessInfo[];
+  checkedPids: Set<number>;
+  onSetChecked: (processes: ProcessInfo[], checked: boolean) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  const checkedCount = selectable.filter((process) => checkedPids.has(process.pid)).length;
+  const all = selectable.length > 0 && checkedCount === selectable.length;
+  const some = checkedCount > 0 && !all;
+
+  useEffect(() => {
+    if (ref.current) {
+      ref.current.indeterminate = some;
+    }
+  }, [some]);
+
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={all}
+      disabled={selectable.length === 0}
+      onChange={() => onSetChecked(selectable, !all)}
+      aria-label="Select all shown processes"
+    />
+  );
+}
+
 export function ProcessTable({
   groups,
   conflictPorts,
@@ -158,6 +219,9 @@ export function ProcessTable({
   selectedPid,
   stopError,
   onStop,
+  checkedPids,
+  onSetChecked,
+  alertKinds,
 }: {
   groups: RenderGroup[];
   conflictPorts: Set<number>;
@@ -167,12 +231,38 @@ export function ProcessTable({
   selectedPid: number | null;
   stopError: StopError | null;
   onStop: (process: ProcessInfo) => void;
+  /** Rows ticked for a bulk stop. */
+  checkedPids: Set<number>;
+  onSetChecked: (processes: ProcessInfo[], checked: boolean) => void;
+  /** Active resource alerts by PID. */
+  alertKinds: Map<number, Set<AlertKind>>;
 }) {
+  const visibleRows = (group: RenderGroup) =>
+    group.processes.length > 1 && !expandedGroups.has(group.key)
+      ? group.processes.slice(0, group.primaryCount)
+      : group.processes;
+  // "Select all" means the rows on screen, not helpers hidden in collapsed groups.
+  const selectable = groups.flatMap(visibleRows).filter(isStoppable);
+  const rowProps = (process: ProcessInfo, isChild: boolean) => ({
+    process,
+    isChild,
+    isSelected: selectedPid === process.pid,
+    isChecked: checkedPids.has(process.pid),
+    alertKinds: alertKinds.get(process.pid),
+    conflictPorts,
+    stopError,
+    onStop,
+    onToggleCheck: (target: ProcessInfo) => onSetChecked([target], !checkedPids.has(target.pid)),
+  });
+
   return (
     <div className={`table-wrap${isStale ? ' is-stale' : ''}`}>
       <table>
         <thead>
           <tr>
+            <th className="col-select">
+              <SelectAllCheckbox selectable={selectable} checkedPids={checkedPids} onSetChecked={onSetChecked} />
+            </th>
             <th>Process</th>
             <th className="col-ports">Ports</th>
             <th className="col-cpu">CPU</th>
@@ -189,22 +279,12 @@ export function ProcessTable({
           if (!isGrouped) {
             return (
               <tbody key={group.key}>
-                <ProcessRow
-                  process={group.processes[0]}
-                  isChild={false}
-                  isSelected={selectedPid === group.processes[0].pid}
-                  conflictPorts={conflictPorts}
-                  stopError={stopError}
-                  onStop={onStop}
-                />
+                <ProcessRow {...rowProps(group.processes[0], false)} />
               </tbody>
             );
           }
 
           const expanded = expandedGroups.has(group.key);
-          const visible = expanded
-            ? group.processes
-            : group.processes.slice(0, group.primaryCount);
 
           return (
             <tbody key={group.key} className="group">
@@ -214,16 +294,8 @@ export function ProcessTable({
                 hasConflict={hasConflict}
                 onToggle={() => onToggleGroup(group.key)}
               />
-              {visible.map((process, index) => (
-                <ProcessRow
-                  key={process.pid}
-                  process={process}
-                  isChild={index >= group.primaryCount}
-                  isSelected={selectedPid === process.pid}
-                  conflictPorts={conflictPorts}
-                  stopError={stopError}
-                  onStop={onStop}
-                />
+              {visibleRows(group).map((process, index) => (
+                <ProcessRow key={process.pid} {...rowProps(process, index >= group.primaryCount)} />
               ))}
             </tbody>
           );

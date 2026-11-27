@@ -204,7 +204,23 @@ def listening_ports_by_pid(connections: Iterable[object] | None = None) -> dict[
     return {pid: sorted(ports) for pid, ports in ports_by_pid.items()}
 
 
-def process_to_info(process: psutil.Process, ports: list[int], now: float | None = None) -> ProcessInfo | None:
+# Identifies one process for its whole life: PIDs are reused, start times aren't.
+ProcessKey = tuple[int, float]
+
+
+def process_to_info(
+    process: psutil.Process,
+    ports: list[int],
+    now: float | None = None,
+    non_dev_cache: dict[ProcessKey, str] | None = None,
+) -> ProcessInfo | None:
+    """Describe ``process`` if the dashboard should list it, else return None.
+
+    When ``non_dev_cache`` is given, a process rejected for its name and
+    command line is remembered there (key -> name) so later scans can skip it
+    without reading its details again. A process's command line doesn't change
+    while it runs, so that verdict holds for its whole life.
+    """
     current_time = time.time() if now is None else now
     try:
         attrs = process.as_dict(
@@ -218,16 +234,24 @@ def process_to_info(process: psutil.Process, ports: list[int], now: float | None
     name = attrs.get("name") or f"pid-{attrs['pid']}"
     cmdline = attrs.get("cmdline")
     command = command_to_text(cmdline)
-    if executable_name(name) in EXCLUDED_PROCESS_NAMES:
+    create_time = attrs.get("create_time")
+
+    def reject() -> None:
+        # A None command line usually means access was denied; that can change, so don't cache it.
+        if non_dev_cache is not None and create_time is not None and cmdline is not None:
+            non_dev_cache[(int(attrs["pid"]), float(create_time))] = name
         return None
+
+    if executable_name(name) in EXCLUDED_PROCESS_NAMES:
+        return reject()
 
     runtime_with_port = bool(ports) and executable_name(name) in PORT_DETECTABLE_RUNTIME_NAMES
     if not is_dev_process(name, cmdline) and not runtime_with_port:
-        return None
+        return reject()
 
     memory_info = attrs.get("memory_info")
     rss = getattr(memory_info, "rss", 0) if memory_info is not None else 0
-    create_time = attrs.get("create_time") or current_time
+    create_time = create_time or current_time
 
     info = ProcessInfo(
         pid=int(attrs["pid"]),
@@ -335,15 +359,42 @@ def detect_port_conflicts(processes: list[ProcessInfo]) -> list[PortConflict]:
     ]
 
 
+# Processes already found not to be dev servers, keyed by (pid, start time).
+# Most of a machine's processes land here, so repeat scans skip their
+# command lines entirely. Entries for exited processes are dropped each scan.
+_non_dev_processes: dict[ProcessKey, str] = {}
+
+
+def is_known_non_dev(key: ProcessKey | None, ports: list[int]) -> bool:
+    name = _non_dev_processes.get(key) if key is not None else None
+    if name is None:
+        return False
+    # A bare runtime (java, ruby, php) is listed once it owns a port, so check it again then.
+    return not (ports and executable_name(name) in PORT_DETECTABLE_RUNTIME_NAMES)
+
+
 def scan_processes() -> ProcessListResponse:
     ports_by_pid = listening_ports_by_pid()
     processes: list[ProcessInfo] = []
     now = time.time()
+    seen: set[ProcessKey] = set()
 
     for process in psutil.process_iter():
-        info = process_to_info(process, ports_by_pid.get(process.pid, []), now=now)
+        ports = ports_by_pid.get(process.pid, [])
+        try:
+            key: ProcessKey | None = (process.pid, process.create_time())
+        except (psutil.Error, PermissionError):
+            key = None
+        if key is not None:
+            seen.add(key)
+            if is_known_non_dev(key, ports):
+                continue
+        info = process_to_info(process, ports, now=now, non_dev_cache=_non_dev_processes)
         if info is not None:
             processes.append(info)
+
+    for stale in _non_dev_processes.keys() - seen:
+        del _non_dev_processes[stale]
 
     processes.sort(key=lambda item: (item.name.lower(), item.pid))
     groups = build_groups(processes)

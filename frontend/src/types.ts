@@ -61,3 +61,35 @@ export interface KillResponse {
   status: string;
   message: string;
 }
+
+/** One process the bulk stop request should stop. */
+export interface StopTarget {
+  pid: number;
+  started_at: number;
+}
+
+export interface StopResult {
+  pid: number;
+  /** "requested": terminate was sent. "failed": see http_status and message. */
+  status: 'requested' | 'failed';
+  http_status: number;
+  message: string;
+}
+
+export interface BulkStopResponse {
+  results: StopResult[];
+}
+
+/** A process start or stop, from the agent's history database. */
+export interface HistoryEvent {
+  /** Epoch seconds. For "started" this is when the process really started. */
+  time: number;
+  kind: 'started' | 'stopped';
+  pid: number;
+  started_at: number;
+  name: string;
+  command: string;
+  cwd: string | null;
+  ports: number[];
+  category: string;
+}
