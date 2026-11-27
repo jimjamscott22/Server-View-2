@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { evaluateAlerts, loadAlertSettings, saveAlertSettings } from './alerts';
-import type { AlertKind, AlertSettings, OverLimitCounts, ResourceAlert } from './alerts';
+import type { AlertKind, AlertSettings, OverLimitSince, ResourceAlert } from './alerts';
 import {
   connectWebSocket,
   disconnectWebSocket,
@@ -8,6 +8,7 @@ import {
   fetchProcesses,
   isWebSocketConnected,
   killProcess,
+  MAX_BULK_STOP,
   stopProcesses,
 } from './api';
 import { ActivityPanel } from './components/ActivityPanel';
@@ -40,6 +41,33 @@ type StopError = { pid: number; message: string };
 const HISTORY_REFRESH_MS = 10_000;
 const HISTORY_LIMIT = 15;
 
+/**
+ * Stop `targets` in requests of at most MAX_BULK_STOP. If a request fails as a
+ * whole (say, rate limited), every process it and later batches held is
+ * reported as failed with that reason, so the dialog can offer a retry.
+ */
+async function stopInBatches(targets: ProcessInfo[]): Promise<StopResult[]> {
+  const results: StopResult[] = [];
+  for (let start = 0; start < targets.length; start += MAX_BULK_STOP) {
+    const batch = targets.slice(start, start + MAX_BULK_STOP);
+    try {
+      const response = await stopProcesses(batch.map(({ pid, started_at }) => ({ pid, started_at })));
+      results.push(...response.results);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : 'Unable to stop processes';
+      if (results.length === 0 && start === 0 && targets.length <= MAX_BULK_STOP) {
+        // Nothing was sent successfully: show it as one error for the whole request.
+        throw caught;
+      }
+      for (const process of targets.slice(start)) {
+        results.push({ pid: process.pid, status: 'failed', http_status: 0, message });
+      }
+      break;
+    }
+  }
+  return results;
+}
+
 type BulkStopState = {
   processes: ProcessInfo[];
   isStopping: boolean;
@@ -65,7 +93,7 @@ function App() {
   const [bulkStop, setBulkStop] = useState<BulkStopState | null>(null);
   const [alertSettings, setAlertSettings] = useState<AlertSettings>(loadAlertSettings);
   const [alerts, setAlerts] = useState<ResourceAlert[]>([]);
-  const overLimitCounts = useRef<OverLimitCounts>(new Map());
+  const overLimitSince = useRef<OverLimitSince>(new Map());
   const [historyEvents, setHistoryEvents] = useState<HistoryEvent[]>([]);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -182,12 +210,14 @@ function App() {
     }
   }, []);
 
-  // Each update advances the alert counters, so alerts need a sustained run over the limit.
+  // When this process list arrived. Alert timing uses it, so re-running the
+  // effect for a settings change doesn't count as time passing.
+  const measuredAt = useMemo(() => Date.now(), [data.processes]);
   useEffect(() => {
-    const result = evaluateAlerts(overLimitCounts.current, data.processes, alertSettings);
-    overLimitCounts.current = result.counts;
+    const result = evaluateAlerts(overLimitSince.current, data.processes, alertSettings, measuredAt);
+    overLimitSince.current = result.since;
     setAlerts(result.alerts);
-  }, [data.processes, alertSettings]);
+  }, [data.processes, alertSettings, measuredAt]);
 
   // Drop ticked rows whose process has exited (or whose PID now belongs to another process).
   useEffect(() => {
@@ -275,7 +305,7 @@ function App() {
     const targets = bulkStop.processes;
     setBulkStop({ ...bulkStop, isStopping: true, error: null });
     try {
-      const { results } = await stopProcesses(targets.map(({ pid, started_at }) => ({ pid, started_at })));
+      const results = await stopInBatches(targets);
       const failures = new Map(results.filter((result) => result.status === 'failed').map((result) => [result.pid, result]));
       const stopped = results.filter((result) => result.status === 'requested').map((result) => result.pid);
       setChecked((current) => {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'vitest';
 import { DEFAULT_ALERT_SETTINGS, describeAlert, evaluateAlerts, loadAlertSettings, saveAlertSettings } from './alerts';
-import type { AlertSettings, OverLimitCounts } from './alerts';
+import type { AlertSettings, OverLimitSince } from './alerts';
 import type { ProcessInfo } from './types';
 
 function proc(overrides: Partial<ProcessInfo> = {}): ProcessInfo {
@@ -19,50 +19,58 @@ function proc(overrides: Partial<ProcessInfo> = {}): ProcessInfo {
   };
 }
 
-const settings: AlertSettings = { enabled: true, cpuPercent: 80, memoryMb: 1000, sustainUpdates: 3 };
+const settings: AlertSettings = { enabled: true, cpuPercent: 80, memoryMb: 1000, sustainSeconds: 6 };
 
-/** Feed a series of updates through the evaluator, as App does. */
-function run(updates: ProcessInfo[][], using: AlertSettings = settings) {
-  let counts: OverLimitCounts = new Map();
+/** Feed measurements, each `[seconds since start, processes]`, through the evaluator as App does. */
+function run(measurements: Array<[number, ProcessInfo[]]>, using: AlertSettings = settings) {
+  let since: OverLimitSince = new Map();
   let alerts: ReturnType<typeof evaluateAlerts>['alerts'] = [];
-  for (const processes of updates) {
-    ({ counts, alerts } = evaluateAlerts(counts, processes, using));
+  for (const [seconds, processes] of measurements) {
+    ({ since, alerts } = evaluateAlerts(since, processes, using, 1_000_000 + seconds * 1000));
   }
   return alerts;
 }
 
 describe('evaluateAlerts', () => {
-  test('alerts only after the limit is exceeded for the sustained number of updates', () => {
-    const hot = [proc({ cpu_usage: 95 })];
+  const hot = [proc({ cpu_usage: 95 })];
+  const cool = [proc({ cpu_usage: 10 })];
 
-    expect(run([hot, hot])).toEqual([]);
-    expect(run([hot, hot, hot])).toEqual([{ pid: 1, name: 'node', kind: 'cpu', value: 95, limit: 80 }]);
+  test('alerts once a process has stayed over the limit for the sustain time', () => {
+    expect(run([[0, hot], [2, hot], [4, hot]])).toEqual([]);
+    expect(run([[0, hot], [2, hot], [4, hot], [6, hot]])).toEqual([
+      { pid: 1, name: 'node', kind: 'cpu', value: 95, limit: 80 },
+    ]);
   });
 
-  test('a dip below the limit restarts the count', () => {
-    const hot = [proc({ cpu_usage: 95 })];
-    const cool = [proc({ cpu_usage: 10 })];
+  test('counts time, not measurements: rapid refreshes cannot fire it early', () => {
+    const burst: Array<[number, ProcessInfo[]]> = Array.from({ length: 20 }, (_, i) => [i * 0.1, hot]);
 
-    expect(run([hot, hot, cool, hot, hot])).toEqual([]);
+    expect(run(burst)).toEqual([]);
+  });
+
+  test('a dip below the limit restarts the timer', () => {
+    expect(run([[0, hot], [4, hot], [5, cool], [6, hot], [10, hot]])).toEqual([]);
+    expect(run([[0, hot], [4, hot], [5, cool], [6, hot], [12, hot]])).toHaveLength(1);
   });
 
   test('tracks memory separately from CPU', () => {
     const big = [proc({ memory_mb: 2048 })];
 
-    expect(run([big, big, big]).map((alert) => alert.kind)).toEqual(['memory']);
+    expect(run([[0, big], [6, big]]).map((alert) => alert.kind)).toEqual(['memory']);
   });
 
-  test('a reused PID starts from zero', () => {
-    const before = [proc({ cpu_usage: 95, started_at: 1000 })];
+  test('a reused PID starts its own timer', () => {
     const reused = [proc({ cpu_usage: 95, started_at: 2000 })];
 
-    expect(run([before, before, reused])).toEqual([]);
+    expect(run([[0, hot], [5, hot], [7, reused]])).toEqual([]);
+  });
+
+  test('a sustain time of 0 alerts on the first measurement', () => {
+    expect(run([[0, hot]], { ...settings, sustainSeconds: 0 })).toHaveLength(1);
   });
 
   test('raises nothing when alerts are off', () => {
-    const hot = [proc({ cpu_usage: 95 })];
-
-    expect(run([hot, hot, hot], { ...settings, enabled: false })).toEqual([]);
+    expect(run([[0, hot], [10, hot]], { ...settings, enabled: false })).toEqual([]);
   });
 });
 
@@ -70,9 +78,9 @@ describe('alert settings storage', () => {
   afterEach(() => window.localStorage.clear());
 
   test('round-trips through localStorage', () => {
-    saveAlertSettings({ enabled: false, cpuPercent: 50, memoryMb: 512, sustainUpdates: 5 });
+    saveAlertSettings({ enabled: false, cpuPercent: 50, memoryMb: 512, sustainSeconds: 10 });
 
-    expect(loadAlertSettings()).toEqual({ enabled: false, cpuPercent: 50, memoryMb: 512, sustainUpdates: 5 });
+    expect(loadAlertSettings()).toEqual({ enabled: false, cpuPercent: 50, memoryMb: 512, sustainSeconds: 10 });
   });
 
   test('falls back to defaults for missing, corrupt, or invalid values', () => {

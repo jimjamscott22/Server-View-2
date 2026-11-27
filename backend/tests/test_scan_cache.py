@@ -26,6 +26,14 @@ class CountingProcess:
     def create_time(self) -> float:
         return self._create_time
 
+    def name(self) -> str:
+        return self._attrs["name"]
+
+    def exec_into(self, name: str, cmdline: list[str]) -> None:
+        """Replace the program, as exec() does: same PID and start time."""
+        self._attrs["name"] = name
+        self._attrs["cmdline"] = cmdline
+
     def as_dict(self, attrs: list[str]) -> dict:
         self.detail_reads += 1
         return {attr: self._attrs.get(attr) for attr in attrs}
@@ -97,3 +105,30 @@ def test_exited_processes_leave_the_cache(monkeypatch: pytest.MonkeyPatch) -> No
     scanner.scan_processes()
 
     assert scanner._non_dev_processes == {}
+
+
+def test_exec_into_a_dev_server_is_noticed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # `bash -c "... && exec uvicorn app:app"` keeps bash's PID and start time.
+    launcher = CountingProcess(6, "bash", ["bash", "-c", "exec uvicorn app:app"])
+    install(monkeypatch, [launcher], {6: [8000]})
+    assert scanner.scan_processes().processes == []
+
+    launcher.exec_into("uvicorn", ["uvicorn", "app:app"])
+
+    assert [p.name for p in scanner.scan_processes().processes] == ["uvicorn"]
+
+
+def test_cached_verdict_expires(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An exec into a program with the same name isn't visible from the name alone.
+    now = [1000.0]
+    monkeypatch.setattr(scanner.time, "time", lambda: now[0])
+    script = CountingProcess(8, "node", ["node", "scripts/prepare.js"])
+    install(monkeypatch, [script])
+    assert scanner.scan_processes().processes == []
+
+    script.exec_into("node", ["node", "node_modules/.bin/vite"])
+    now[0] += scanner.NON_DEV_RECHECK_SECONDS / 2
+    assert scanner.scan_processes().processes == []
+
+    now[0] += scanner.NON_DEV_RECHECK_SECONDS
+    assert [p.pid for p in scanner.scan_processes().processes] == [8]

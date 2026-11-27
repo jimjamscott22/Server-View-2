@@ -1,7 +1,7 @@
 import { BellRing, SlidersHorizontal } from 'lucide-react';
 import { useId, useState } from 'react';
 import type { FormEvent } from 'react';
-import { DEFAULT_ALERT_SETTINGS, UPDATE_INTERVAL_SECONDS, describeAlert } from '../alerts';
+import { DEFAULT_ALERT_SETTINGS, describeAlert } from '../alerts';
 import type { AlertSettings, ResourceAlert } from '../alerts';
 
 function AlertSettingsForm({
@@ -17,7 +17,7 @@ function AlertSettingsForm({
   const [enabled, setEnabled] = useState(settings.enabled);
   const [cpu, setCpu] = useState(String(settings.cpuPercent));
   const [memory, setMemory] = useState(String(settings.memoryMb));
-  const [seconds, setSeconds] = useState(String(settings.sustainUpdates * UPDATE_INTERVAL_SECONDS));
+  const [seconds, setSeconds] = useState(String(settings.sustainSeconds));
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -26,10 +26,7 @@ function AlertSettingsForm({
       enabled,
       cpuPercent: Number(cpu) > 0 ? Number(cpu) : DEFAULT_ALERT_SETTINGS.cpuPercent,
       memoryMb: Number(memory) > 0 ? Number(memory) : DEFAULT_ALERT_SETTINGS.memoryMb,
-      sustainUpdates:
-        sustainSeconds > 0
-          ? Math.max(1, Math.round(sustainSeconds / UPDATE_INTERVAL_SECONDS))
-          : DEFAULT_ALERT_SETTINGS.sustainUpdates,
+      sustainSeconds: sustainSeconds > 0 ? sustainSeconds : DEFAULT_ALERT_SETTINGS.sustainSeconds,
     });
     onClose();
   }
@@ -51,7 +48,7 @@ function AlertSettingsForm({
         </label>
         <label htmlFor={`${id}-seconds`}>
           For at least (seconds)
-          <input id={`${id}-seconds`} type="number" min={UPDATE_INTERVAL_SECONDS} step={UPDATE_INTERVAL_SECONDS} inputMode="numeric" value={seconds} disabled={!enabled} onChange={(event) => setSeconds(event.target.value)} />
+          <input id={`${id}-seconds`} type="number" min="1" step="1" inputMode="numeric" value={seconds} disabled={!enabled} onChange={(event) => setSeconds(event.target.value)} />
         </label>
       </div>
       <p className="alert-hint">CPU is a percent of one core, so a busy multi-threaded process can go past 100%.</p>
@@ -75,7 +72,7 @@ export function ResourceAlerts({
 }) {
   const [editing, setEditing] = useState(false);
   const summary = settings.enabled
-    ? `Alerts at ${settings.cpuPercent}% CPU or ${settings.memoryMb} MB for ${settings.sustainUpdates * UPDATE_INTERVAL_SECONDS}s`
+    ? `Alerts at ${settings.cpuPercent}% CPU or ${settings.memoryMb} MB for ${settings.sustainSeconds}s`
     : 'Resource alerts are off';
 
   return (

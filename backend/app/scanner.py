@@ -212,14 +212,14 @@ def process_to_info(
     process: psutil.Process,
     ports: list[int],
     now: float | None = None,
-    non_dev_cache: dict[ProcessKey, str] | None = None,
+    non_dev_cache: dict[ProcessKey, tuple[str, float]] | None = None,
 ) -> ProcessInfo | None:
     """Describe ``process`` if the dashboard should list it, else return None.
 
     When ``non_dev_cache`` is given, a process rejected for its name and
-    command line is remembered there (key -> name) so later scans can skip it
-    without reading its details again. A process's command line doesn't change
-    while it runs, so that verdict holds for its whole life.
+    command line is remembered there (key -> (name, when)) so later scans can
+    skip it without reading its details again. See ``is_known_non_dev`` for
+    when that verdict is checked again.
     """
     current_time = time.time() if now is None else now
     try:
@@ -239,7 +239,7 @@ def process_to_info(
     def reject() -> None:
         # A None command line usually means access was denied; that can change, so don't cache it.
         if non_dev_cache is not None and create_time is not None and cmdline is not None:
-            non_dev_cache[(int(attrs["pid"]), float(create_time))] = name
+            non_dev_cache[(int(attrs["pid"]), float(create_time))] = (name, current_time)
         return None
 
     if executable_name(name) in EXCLUDED_PROCESS_NAMES:
@@ -359,15 +359,30 @@ def detect_port_conflicts(processes: list[ProcessInfo]) -> list[PortConflict]:
     ]
 
 
-# Processes already found not to be dev servers, keyed by (pid, start time).
+# Processes already found not to be dev servers: (pid, start time) -> (name, when).
 # Most of a machine's processes land here, so repeat scans skip their
 # command lines entirely. Entries for exited processes are dropped each scan.
-_non_dev_processes: dict[ProcessKey, str] = {}
+_non_dev_processes: dict[ProcessKey, tuple[str, float]] = {}
+
+# A process can exec() a new program without changing its PID or start time
+# (a shell script ending in `exec uvicorn ...`). A changed name catches most of
+# these on the next scan; this expiry catches an exec into a same-named program.
+NON_DEV_RECHECK_SECONDS = 60.0
 
 
-def is_known_non_dev(key: ProcessKey | None, ports: list[int]) -> bool:
-    name = _non_dev_processes.get(key) if key is not None else None
-    if name is None:
+def is_known_non_dev(key: ProcessKey | None, ports: list[int], process: psutil.Process, now: float) -> bool:
+    """True if this process was already rejected and that verdict still holds."""
+    entry = _non_dev_processes.get(key) if key is not None else None
+    if entry is None:
+        return False
+    name, checked_at = entry
+    if now - checked_at >= NON_DEV_RECHECK_SECONDS:
+        return False
+    try:
+        # Cheap compared to the command line: one small read on Linux.
+        if process.name() != name:
+            return False
+    except (psutil.Error, PermissionError):
         return False
     # A bare runtime (java, ruby, php) is listed once it owns a port, so check it again then.
     return not (ports and executable_name(name) in PORT_DETECTABLE_RUNTIME_NAMES)
@@ -387,7 +402,7 @@ def scan_processes() -> ProcessListResponse:
             key = None
         if key is not None:
             seen.add(key)
-            if is_known_non_dev(key, ports):
+            if is_known_non_dev(key, ports, process, now):
                 continue
         info = process_to_info(process, ports, now=now, non_dev_cache=_non_dev_processes)
         if info is not None:

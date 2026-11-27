@@ -112,7 +112,7 @@ Server-View-2 is a well-architected, cleanly implemented application for monitor
 
 #### 5. **Performance Optimization** ✅ **IMPLEMENTED**
 - **Issue**: Every request did a full process scan, which is slow on machines with many processes
-- **Classification cache**: A process rejected as "not a dev server" is remembered by `(pid, start time)`, so later scans skip reading its command line. A bare `java`/`ruby`/`php` runtime is checked again once it owns a port. With 681 processes, a repeat scan went from ~60 ms to ~10 ms
+- **Classification cache**: A process rejected as "not a dev server" is remembered by `(pid, start time)`, so later scans skip reading its command line. The verdict is checked again when the process name changes (a launcher that `exec`s a server keeps its PID and start time), after 60 s, or when a bare runtime such as `java` gains a port. With 682 processes, a repeat scan went from ~60 ms to ~17 ms
 - **Shared scan**: REST, the WebSocket broadcast and the history recorder share one scan (`app/snapshot.py`). Concurrent callers wait for a single scan in progress instead of starting their own
 - **Async scanning**: Already done: scans run in worker threads, never on the event loop
 - **Not done: diff-based WebSocket updates.** Uptime and CPU change on nearly every update, so a diff would be almost as large as the full list. Revisit if payloads grow large
@@ -128,7 +128,7 @@ Server-View-2 is a well-architected, cleanly implemented application for monitor
 
 #### 7. **Resource Alerts** ✅ **IMPLEMENTED**
 - **Issue**: Users had to check for high CPU/memory manually
-- **Behavior**: A process alerts after staying over a CPU or memory limit for a set time (default 80% CPU or 1024 MB for 6 s), so short spikes such as a rebuild stay quiet. Alerts appear in a banner (polite live region) and highlight the row and value
+- **Behavior**: A process alerts after staying over a CPU or memory limit for a set time (default 80% CPU or 1024 MB for 6 s), so short spikes such as a rebuild stay quiet. Timing uses when each measurement arrived, so extra refreshes can't make an alert fire early. Alerts appear in a banner (polite live region) and highlight the row and value
 - **Settings**: Editable in the dashboard and saved in `localStorage`. They can also be turned off
 - **Not done**: Desktop notifications, and alerts while no dashboard is open (for example from the tray)
 - **Status**: ✅ Implemented
@@ -136,7 +136,7 @@ Server-View-2 is a well-architected, cleanly implemented application for monitor
 #### 8. **Bulk Actions** ✅ **IMPLEMENTED**
 - **Issue**: Stopping several processes meant one dialog each
 - **UI**: Row checkboxes plus "select all shown" in the grouped table. Docker port owners can't be selected. A selection bar has **Stop selected**, and a confirmation dialog lists every process and warns about databases. Processes that fail stay in the dialog with their reasons
-- **API**: `POST /api/processes/stop` takes up to 25 `{pid, started_at}` targets. Each gets the full single-stop checks and its own audit line. The request counts once toward the rate limit
+- **API**: `POST /api/processes/stop` takes up to 25 `{pid, started_at}` targets; the dashboard splits bigger selections into batches. Each gets the full single-stop checks and its own audit line. The request counts once toward the rate limit
 - **Status**: ✅ Implemented
 
 ### 🟢 Low Priority
@@ -214,7 +214,7 @@ Server-View-2 is a well-architected, cleanly implemented application for monitor
 | Metric | Value | Target |
 |--------|-------|--------|
 | Backend startup | ~1-2s | <1s |
-| Process scan | ~10ms repeat scan (681 processes; ~60ms first scan) | <100ms |
+| Process scan | ~17ms repeat scan (682 processes; ~60ms without the cache) | <100ms |
 | API response | ~10-50ms | <20ms |
 | Frontend bundle | ~500KB | <1MB |
 | Update interval | 2s WebSocket push | Real-time |

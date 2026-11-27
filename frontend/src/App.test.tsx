@@ -562,6 +562,71 @@ describe('App', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent('Too many stop requests. Try again in 4 seconds.');
     });
 
+    function manyProcesses(count: number): ProcessListResponse {
+      const processes = Array.from({ length: count }, (_, i) => ({
+        pid: 1000 + i,
+        name: 'node',
+        command: `npx vite --port ${4000 + i}`,
+        cwd: `/work/app-${i}`,
+        ports: [4000 + i],
+        cpu_usage: 0,
+        memory_mb: 10,
+        uptime_seconds: 5,
+        status: 'running',
+        started_at: 1700000000 + i,
+      }));
+      return { processes, summary: { process_count: count, total_memory_mb: count * 10, active_ports: [] } };
+    }
+
+    function batchRoutes(response: ProcessListResponse, failBatch?: number) {
+      const batches: number[][] = [];
+      vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+        if (url === '/api/processes/stop') {
+          const pids = (JSON.parse(String(init?.body)) as { targets: { pid: number }[] }).targets.map((t) => t.pid);
+          batches.push(pids);
+          if (batches.length === failBatch) {
+            return { ok: false, statusText: 'Too Many Requests', json: async () => ({ detail: 'Too many stop requests. Try again in 3 seconds.' }) } as Response;
+          }
+          return { ok: true, json: async () => ({ results: pids.map((pid) => ({ pid, status: 'requested', http_status: 200, message: 'ok' })) }) } as Response;
+        }
+        if (url.startsWith('/api/history')) {
+          return { ok: true, json: async () => ({ events: [] }) } as Response;
+        }
+        return { ok: true, json: async () => response } as Response;
+      });
+      return batches;
+    }
+
+    test('splits selections larger than the API limit into batches of 25', async () => {
+      const user = userEvent.setup();
+      const batches = batchRoutes(manyProcesses(30));
+      render(<App />);
+      await screen.findByText('npx vite --port 4000');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select all shown processes' }));
+      await user.click(screen.getByRole('button', { name: 'Stop selected' }));
+      await user.click(screen.getByRole('button', { name: 'Stop 30 processes' }));
+
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      expect(batches.map((batch) => batch.length)).toEqual([25, 5]);
+      expect(new Set(batches.flat()).size).toBe(30);
+    });
+
+    test('reports the processes of a rejected batch as failed and keeps them for a retry', async () => {
+      const user = userEvent.setup();
+      batchRoutes(manyProcesses(30), 2);
+      render(<App />);
+      await screen.findByText('npx vite --port 4000');
+
+      await user.click(screen.getByRole('checkbox', { name: 'Select all shown processes' }));
+      await user.click(screen.getByRole('button', { name: 'Stop selected' }));
+      await user.click(screen.getByRole('button', { name: 'Stop 30 processes' }));
+
+      const dialog = await screen.findByRole('dialog', { name: '5 processes didn’t stop' });
+      expect(within(dialog).getAllByText('Too many stop requests. Try again in 3 seconds.')).toHaveLength(5);
+      expect(within(screen.getByRole('region', { name: 'Selected processes' })).getByText('5')).toBeInTheDocument();
+    });
+
     test('select all skips Docker port owners', async () => {
       const user = userEvent.setup();
       mockFetch(dockerAndDatabaseResponse);
@@ -584,7 +649,7 @@ describe('App', () => {
     test('flags a process over the limit and highlights its row', async () => {
       window.localStorage.setItem(
         'server-view.alert-settings',
-        JSON.stringify({ enabled: true, cpuPercent: 1, memoryMb: 100000, sustainUpdates: 1 }),
+        JSON.stringify({ enabled: true, cpuPercent: 1, memoryMb: 100000, sustainSeconds: 0 }),
       );
       mockFetch(populatedResponse);
       render(<App />);
