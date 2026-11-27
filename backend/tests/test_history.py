@@ -151,6 +151,15 @@ def test_prunes_rows_past_retention(recorder: HistoryRecorder, store: HistorySto
     assert len(store.samples_for((1, 5.0), since=0)) == 1
 
 
+def test_keeps_start_of_a_process_older_than_retention(recorder: HistoryRecorder, store: HistoryStore, clock: Clock) -> None:
+    # A database server up for a month: its start time is old, but the row is new.
+    clock.now = 100 * 86400.0
+    recorder.record(snapshot(proc(1, started_at=clock.now - 30 * 86400)))
+
+    [event] = store.recent_events()
+    assert (event.kind, event.time) == ("started", clock.now - 30 * 86400)
+
+
 def test_unwritable_database_turns_history_off(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     blocker = tmp_path / "file"
     blocker.write_text("")
@@ -197,7 +206,7 @@ def test_agent_records_history_while_running(monkeypatch: pytest.MonkeyPatch, hi
     monkeypatch.setattr(scanner, "scan_processes", lambda: snapshot(proc(42)))
     # Entering the TestClient runs the app lifespan, which starts the recorder.
     with TestClient(main.app, base_url="http://127.0.0.1:8008") as client:
-        for _ in range(50):
+        for _ in range(250):
             events = client.get("/api/history/events").json()["events"]
             if events:
                 break

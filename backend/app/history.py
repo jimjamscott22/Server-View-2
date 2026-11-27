@@ -58,10 +58,14 @@ CREATE TABLE IF NOT EXISTS events (
     cwd TEXT,
     ports TEXT NOT NULL,
     category TEXT NOT NULL,
+    -- When the row was written. Retention goes by this, not by `time`: a
+    -- server that started weeks ago is recorded with its real start time.
+    recorded_at REAL NOT NULL,
     -- A restarted agent sees the same running processes again; this keeps one row each.
     UNIQUE (kind, pid, started_at)
 );
 CREATE INDEX IF NOT EXISTS events_by_time ON events (time);
+CREATE INDEX IF NOT EXISTS events_by_recorded_at ON events (recorded_at);
 
 CREATE TABLE IF NOT EXISTS samples (
     time REAL NOT NULL,
@@ -144,11 +148,12 @@ class HistoryStore:
         with self._lock:
             self._conn.close()
 
-    def add_event(self, kind: str, process: ProcessInfo, at: float) -> None:
+    def add_event(self, kind: str, process: ProcessInfo, at: float, recorded_at: float) -> None:
         with self._lock, self._conn:
             self._conn.execute(
-                "INSERT OR IGNORE INTO events (time, kind, pid, started_at, name, command, cwd, ports, category)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO events"
+                " (time, kind, pid, started_at, name, command, cwd, ports, category, recorded_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     at,
                     kind,
@@ -159,6 +164,7 @@ class HistoryStore:
                     process.cwd,
                     json.dumps(process.ports),
                     process.category,
+                    recorded_at,
                 ),
             )
 
@@ -202,7 +208,7 @@ class HistoryStore:
 
     def prune(self, before: float) -> None:
         with self._lock, self._conn:
-            self._conn.execute("DELETE FROM events WHERE time < ?", (before,))
+            self._conn.execute("DELETE FROM events WHERE recorded_at < ?", (before,))
             self._conn.execute("DELETE FROM samples WHERE time < ?", (before,))
 
 
@@ -235,7 +241,7 @@ class HistoryRecorder:
             if key not in self._running:
                 # Time it really started, not when we noticed. INSERT OR IGNORE
                 # skips processes a previous agent run already recorded.
-                self.store.add_event("started", process, at=process.started_at)
+                self.store.add_event("started", process, at=process.started_at, recorded_at=now)
 
         for key, process in list(self._running.items()):
             if key in current:
@@ -246,7 +252,7 @@ class HistoryRecorder:
                 current[key] = process
                 continue
             # Keep the last details we saw (ports are gone once it exits).
-            self.store.add_event("stopped", process, at=now)
+            self.store.add_event("stopped", process, at=now, recorded_at=now)
             self._last_sample.pop(key, None)
 
         due = [
