@@ -295,6 +295,9 @@ function App() {
 
   function handleAlertSettingsChange(settings: AlertSettings) {
     saveAlertSettings(settings);
+    // Timers started under the old limits don't say how long usage has been
+    // over the new ones, so every process starts timing again from now.
+    overLimitSince.current = new Map();
     setAlertSettings(settings);
   }
 

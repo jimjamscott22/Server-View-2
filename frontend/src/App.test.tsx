@@ -661,6 +661,36 @@ describe('App', () => {
       expect(row.querySelector('.cpu-cell')).toHaveClass('is-over-limit');
     });
 
+    test('restarts alert timers when the limits change', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      window.localStorage.setItem(
+        'server-view.alert-settings',
+        JSON.stringify({ enabled: true, cpuPercent: 100000, memoryMb: 100, sustainSeconds: 6 }),
+      );
+      // node (PID 101) uses 128.4 MB on every poll. A fresh copy each time, as real fetch returns.
+      vi.stubGlobal('fetch', async (url: string) => ({
+        ok: true,
+        json: async () => (url.startsWith('/api/history') ? { events: [] } : structuredClone(populatedResponse)),
+      }));
+      render(<App />);
+      await screen.findByText('npm run dev');
+
+      // Over the 100 MB limit for 8 s of polls: it alerts.
+      await vi.advanceTimersByTimeAsync(8000);
+      expect(await screen.findByText(/node \(PID 101\) is using 128 MB/)).toBeInTheDocument();
+
+      // Raise the limit to 120 MB, which it is still over: the old timer must not carry over.
+      fireEvent.click(screen.getByRole('button', { name: 'Alert settings' }));
+      fireEvent.change(screen.getByLabelText('Memory above (MB)'), { target: { value: '120' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+      expect(screen.getByText('Alerts at 100000% CPU or 120 MB for 6s')).toBeInTheDocument();
+      expect(screen.queryByText(/node \(PID 101\) is using/)).not.toBeInTheDocument();
+
+      // Six more seconds over the new limit and it alerts again.
+      await vi.advanceTimersByTimeAsync(8000);
+      expect(await screen.findByText(/node \(PID 101\) is using 128 MB of memory \(limit 120 MB\)/)).toBeInTheDocument();
+    });
+
     test('saves edited limits', async () => {
       const user = userEvent.setup();
       mockFetch(emptyResponse);
