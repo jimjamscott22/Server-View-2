@@ -2,6 +2,7 @@ import type { BulkStopResponse, HistoryEvent, KillResponse, ProcessListResponse,
 
 // WebSocket connection for real-time updates
 let socket: WebSocket | null = null;
+let connectTimer: ReturnType<typeof setTimeout> | null = null;
 let onMessageCallback: ((data: ProcessListResponse) => void) | null = null;
 let onErrorCallback: ((error: Error) => void) | null = null;
 let onCloseCallback: (() => void) | null = null;
@@ -77,7 +78,9 @@ export function connectWebSocket(
   onCloseCallback = onClose ?? null;
   reconnectAttempts = 0;
 
-  connect();
+  // Wait one tick, so a connection cancelled right away (StrictMode runs effects
+  // twice in development) never opens a socket the browser would warn about.
+  connectTimer = setTimeout(connect, 0);
 }
 
 function connect(): void {
@@ -126,7 +129,7 @@ function connect(): void {
       if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
         reconnectAttempts++;
         console.log(`Attempting to reconnect (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
-        setTimeout(connect, RECONNECT_DELAY_MS);
+        connectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
       } else {
         console.error('Max reconnection attempts reached');
       }
@@ -140,7 +143,14 @@ function connect(): void {
 }
 
 export function disconnectWebSocket(): void {
+  if (connectTimer !== null) {
+    clearTimeout(connectTimer);
+    connectTimer = null;
+  }
   if (socket) {
+    // The close event arrives later. Detach first, so this socket can't reach the
+    // next connection's callbacks or schedule a reconnect over it.
+    socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null;
     socket.close();
     socket = null;
   }
