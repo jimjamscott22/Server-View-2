@@ -2,6 +2,7 @@ import {
   Columns3,
   Cpu,
   Grid2X2,
+  History,
   House,
   Layers3,
   ListTree,
@@ -40,6 +41,7 @@ export function AppNavigation({
     { href: '#overview', label: 'Overview', Icon: House },
     { href: '#dev-ports', label: 'Dev ports', Icon: Network, count: commonPortCount },
     { href: '#workspace', label: 'Processes', Icon: Layers3, count: summary.process_count },
+    { href: '#activity', label: 'Activity', Icon: History },
   ];
 
   return (

@@ -1,5 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { connectWebSocket, disconnectWebSocket, fetchProcesses, isWebSocketConnected, killProcess } from './api';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { evaluateAlerts, loadAlertSettings, saveAlertSettings } from './alerts';
+import type { AlertKind, AlertSettings, OverLimitSince, ResourceAlert } from './alerts';
+import {
+  connectWebSocket,
+  disconnectWebSocket,
+  fetchHistoryEvents,
+  fetchProcesses,
+  isWebSocketConnected,
+  killProcess,
+  MAX_BULK_STOP,
+  stopProcesses,
+} from './api';
+import { ActivityPanel } from './components/ActivityPanel';
+import { BulkStopDialog } from './components/BulkStopDialog';
 import {
   AppNavigation,
   DashboardHeader,
@@ -11,10 +24,11 @@ import type { ViewMode } from './components/DashboardChrome';
 import { ConfirmStopDialog } from './components/ConfirmStopDialog';
 import { DevPortBay } from './components/DevPortBay';
 import { PortMap } from './components/PortMap';
-import { ProcessTable } from './components/ProcessTable';
+import { ProcessTable, isStoppable } from './components/ProcessTable';
 import { ProjectCards } from './components/ProjectCards';
+import { ResourceAlerts } from './components/ResourceAlerts';
 import { buildDevPortSlots, buildRenderGroups, filterProcesses } from './processUtils';
-import type { ProcessInfo, ProcessListResponse, ProcessSummary } from './types';
+import type { HistoryEvent, ProcessInfo, ProcessListResponse, ProcessSummary, StopResult } from './types';
 
 const EMPTY_SUMMARY: ProcessSummary = {
   process_count: 0,
@@ -23,6 +37,43 @@ const EMPTY_SUMMARY: ProcessSummary = {
 };
 
 type StopError = { pid: number; message: string };
+
+const HISTORY_REFRESH_MS = 10_000;
+const HISTORY_LIMIT = 15;
+
+/**
+ * Stop `targets` in requests of at most MAX_BULK_STOP. If a request fails as a
+ * whole (say, rate limited), every process it and later batches held is
+ * reported as failed with that reason, so the dialog can offer a retry.
+ */
+async function stopInBatches(targets: ProcessInfo[]): Promise<StopResult[]> {
+  const results: StopResult[] = [];
+  for (let start = 0; start < targets.length; start += MAX_BULK_STOP) {
+    const batch = targets.slice(start, start + MAX_BULK_STOP);
+    try {
+      const response = await stopProcesses(batch.map(({ pid, started_at }) => ({ pid, started_at })));
+      results.push(...response.results);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : 'Unable to stop processes';
+      if (results.length === 0 && start === 0 && targets.length <= MAX_BULK_STOP) {
+        // Nothing was sent successfully: show it as one error for the whole request.
+        throw caught;
+      }
+      for (const process of targets.slice(start)) {
+        results.push({ pid: process.pid, status: 'failed', http_status: 0, message });
+      }
+      break;
+    }
+  }
+  return results;
+}
+
+type BulkStopState = {
+  processes: ProcessInfo[];
+  isStopping: boolean;
+  error: string | null;
+  failures: Map<number, StopResult>;
+};
 
 function App() {
   const [data, setData] = useState<ProcessListResponse>({ processes: [], summary: EMPTY_SUMMARY });
@@ -37,6 +88,15 @@ function App() {
   const [wsConnected, setWsConnected] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [compact, setCompact] = useState(false);
+  // Rows ticked for a bulk stop, by PID. Holds the process as it was when ticked.
+  const [checked, setChecked] = useState<Map<number, ProcessInfo>>(new Map());
+  const [bulkStop, setBulkStop] = useState<BulkStopState | null>(null);
+  const [alertSettings, setAlertSettings] = useState<AlertSettings>(loadAlertSettings);
+  const [alerts, setAlerts] = useState<ResourceAlert[]>([]);
+  const overLimitSince = useRef<OverLimitSince>(new Map());
+  const [historyEvents, setHistoryEvents] = useState<HistoryEvent[]>([]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const toggleGroup = useCallback((key: string) => {
     setExpandedGroups((current) => {
@@ -150,6 +210,132 @@ function App() {
     }
   }, []);
 
+  // When this process list arrived. Alert timing uses it, so re-running the
+  // effect for a settings change doesn't count as time passing.
+  const measuredAt = useMemo(() => Date.now(), [data.processes]);
+  useEffect(() => {
+    const result = evaluateAlerts(overLimitSince.current, data.processes, alertSettings, measuredAt);
+    overLimitSince.current = result.since;
+    setAlerts(result.alerts);
+  }, [data.processes, alertSettings, measuredAt]);
+
+  // Drop ticked rows whose process has exited (or whose PID now belongs to another process).
+  useEffect(() => {
+    setChecked((current) => {
+      if (current.size === 0) {
+        return current;
+      }
+      const byPid = new Map(data.processes.map((process) => [process.pid, process]));
+      const next = new Map<number, ProcessInfo>();
+      for (const [pid, process] of current) {
+        const latest = byPid.get(pid);
+        if (latest && latest.started_at === process.started_at) {
+          next.set(pid, latest);
+        }
+      }
+      return next.size === current.size ? current : next;
+    });
+  }, [data.processes]);
+
+  // Refresh the activity list on a timer, and soon after the set of processes changes.
+  const processIdentity = useMemo(
+    () => data.processes.map((process) => `${process.pid}:${process.started_at}`).sort().join(','),
+    [data.processes],
+  );
+  useEffect(() => {
+    let ignore = false;
+    const controller = new AbortController();
+    const load = () => {
+      setNowMs(Date.now());
+      fetchHistoryEvents(HISTORY_LIMIT, controller.signal)
+        .then((events) => {
+          if (!ignore) {
+            setHistoryEvents(events);
+            setHistoryError(null);
+          }
+        })
+        .catch((caught: Error) => {
+          if (!ignore && caught.name !== 'AbortError') {
+            setHistoryError(caught.message);
+          }
+        });
+    };
+    load();
+    const timer = setInterval(load, HISTORY_REFRESH_MS);
+    return () => {
+      ignore = true;
+      controller.abort();
+      clearInterval(timer);
+    };
+  }, [processIdentity]);
+
+  const alertKinds = useMemo(() => {
+    const byPid = new Map<number, Set<AlertKind>>();
+    for (const alert of alerts) {
+      byPid.set(alert.pid, (byPid.get(alert.pid) ?? new Set()).add(alert.kind));
+    }
+    return byPid;
+  }, [alerts]);
+
+  const checkedPids = useMemo(() => new Set(checked.keys()), [checked]);
+
+  const setProcessesChecked = useCallback((processes: ProcessInfo[], isChecked: boolean) => {
+    setChecked((current) => {
+      const next = new Map(current);
+      for (const process of processes) {
+        if (isChecked && isStoppable(process)) {
+          next.set(process.pid, process);
+        } else {
+          next.delete(process.pid);
+        }
+      }
+      return next;
+    });
+  }, []);
+
+  function handleAlertSettingsChange(settings: AlertSettings) {
+    saveAlertSettings(settings);
+    // Timers started under the old limits don't say how long usage has been
+    // over the new ones, so every process starts timing again from now.
+    overLimitSince.current = new Map();
+    setAlertSettings(settings);
+  }
+
+  async function handleConfirmBulkStop() {
+    if (!bulkStop) {
+      return;
+    }
+    const targets = bulkStop.processes;
+    setBulkStop({ ...bulkStop, isStopping: true, error: null });
+    try {
+      const results = await stopInBatches(targets);
+      const failures = new Map(results.filter((result) => result.status === 'failed').map((result) => [result.pid, result]));
+      const stopped = results.filter((result) => result.status === 'requested').map((result) => result.pid);
+      setChecked((current) => {
+        const next = new Map(current);
+        stopped.forEach((pid) => next.delete(pid));
+        return next;
+      });
+      if (failures.size === 0) {
+        setBulkStop(null);
+      } else {
+        // Keep the dialog open on just the ones that failed, with their reasons.
+        setBulkStop({
+          processes: targets.filter((process) => failures.has(process.pid)),
+          isStopping: false,
+          error: null,
+          failures,
+        });
+      }
+    } catch (caught) {
+      setBulkStop({
+        ...bulkStop,
+        isStopping: false,
+        error: caught instanceof Error ? caught.message : 'Unable to stop processes',
+      });
+    }
+  }
+
   const visibleProcesses = useMemo(() => filterProcesses(data.processes, query), [data.processes, query]);
   const groups = useMemo(() => buildRenderGroups(visibleProcesses), [visibleProcesses]);
   const conflictPorts = useMemo(
@@ -217,14 +403,43 @@ function App() {
         <section id="workspace" className="process-section" aria-label="Processes">
           <WorkspaceHeader mode={viewMode} onModeChange={setViewMode} />
           <ProcessToolbar query={query} showing={visibleProcesses.length} total={data.processes.length} onQueryChange={setQuery} />
+          <ResourceAlerts alerts={alerts} settings={alertSettings} onSettingsChange={handleAlertSettingsChange} />
+          {checked.size > 0 ? (
+            <div className="bulk-bar" role="region" aria-label="Selected processes">
+              <span>
+                <strong>{checked.size}</strong> selected
+              </span>
+              <button type="button" onClick={() => setChecked(new Map())}>
+                Clear
+              </button>
+              <button
+                className="danger"
+                type="button"
+                onClick={() => setBulkStop({ processes: [...checked.values()], isStopping: false, error: null, failures: new Map() })}
+              >
+                Stop selected
+              </button>
+            </div>
+          ) : null}
           {error ? <div className="alert">Error: {error}</div> : null}
           {data.port_conflicts && data.port_conflicts.length > 0 ? <div className="conflict-banner" role="status">{data.port_conflicts.map((conflict) => `Port ${conflict.port} claimed by ${conflict.pids.length} processes`).join(' \u00b7 ')}</div> : null}
           {isLoading ? <div className="state">Loading processes...</div> : null}
           {!isLoading && visibleProcesses.length === 0 ? <div className="state">{query ? 'No processes match the current filter.' : 'No development processes detected.'}</div> : null}
-          {!isLoading && visibleProcesses.length > 0 && viewMode === 'table' ? <ProcessTable groups={groups} conflictPorts={conflictPorts} expandedGroups={expandedGroups} onToggleGroup={toggleGroup} isStale={isStale} selectedPid={selectedProcess?.pid ?? null} stopError={stopError} onStop={(process) => { setStopError(null); setSelectedProcess(process); }} /> : null}
+          {!isLoading && visibleProcesses.length > 0 && viewMode === 'table' ? <ProcessTable groups={groups} conflictPorts={conflictPorts} expandedGroups={expandedGroups} onToggleGroup={toggleGroup} isStale={isStale} selectedPid={selectedProcess?.pid ?? null} stopError={stopError} onStop={(process) => { setStopError(null); setSelectedProcess(process); }} checkedPids={checkedPids} onSetChecked={setProcessesChecked} alertKinds={alertKinds} /> : null}
           {!isLoading && visibleProcesses.length > 0 && viewMode === 'cards' ? <ProjectCards groups={groups} isStale={isStale} onStop={(process) => { setStopError(null); setSelectedProcess(process); }} /> : null}
           {!isLoading && visibleProcesses.length > 0 && viewMode === 'ports' ? <PortMap groups={groups} hostName={hostName} onStop={(process) => { setStopError(null); setSelectedProcess(process); }} /> : null}
         </section>
+        <ActivityPanel events={historyEvents} error={historyError} nowMs={nowMs} />
+        {bulkStop ? (
+          <BulkStopDialog
+            processes={bulkStop.processes}
+            isStopping={bulkStop.isStopping}
+            error={bulkStop.error}
+            failures={bulkStop.failures}
+            onCancel={() => setBulkStop(null)}
+            onConfirm={() => void handleConfirmBulkStop()}
+          />
+        ) : null}
         {selectedProcess ? <ConfirmStopDialog process={selectedProcess} isStopping={isStopping} error={stopError?.pid === selectedProcess.pid ? stopError.message : null} onCancel={() => setSelectedProcess(null)} onConfirm={() => void handleConfirmStop()} /> : null}
       </main>
     </div>

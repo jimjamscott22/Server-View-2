@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { buildDevPortSlots, buildRenderGroups, COMMON_DEV_PORTS } from './processUtils';
+import { buildDevPortSlots, buildRenderGroups, COMMON_DEV_PORTS, formatRelativeTime } from './processUtils';
 import type { ProcessInfo } from './types';
 
 function makeProcess(overrides: Partial<ProcessInfo> & { pid: number }): ProcessInfo {
@@ -136,5 +136,22 @@ describe('buildDevPortSlots', () => {
     const other = makeProcess({ pid: 3, ports: [5178, 8080] });
     const slots = buildDevPortSlots([other]);
     expect(slots.every((slot) => slot.process === null)).toBe(true);
+  });
+});
+
+describe('formatRelativeTime', () => {
+  const now = 1_700_000_000_000;
+
+  test.each([
+    [10, 'just now'],
+    [5 * 60, '5 min ago'],
+    [3 * 3600, '3 h ago'],
+    [2 * 86400, '2 d ago'],
+  ])('%i seconds ago reads "%s"', (secondsAgo, expected) => {
+    expect(formatRelativeTime(now / 1000 - secondsAgo, now)).toBe(expected);
+  });
+
+  test('clamps times slightly in the future to "just now"', () => {
+    expect(formatRelativeTime(now / 1000 + 5, now)).toBe('just now');
   });
 });

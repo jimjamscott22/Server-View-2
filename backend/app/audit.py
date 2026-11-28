@@ -16,12 +16,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sys
 import threading
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from app import paths
 from app.models import ProcessInfo
 
 AUDIT_LOG_ENV = "SERVER_VIEW_AUDIT_LOG"
@@ -38,14 +38,7 @@ _lock = threading.Lock()
 
 
 def default_audit_log_path() -> Path:
-    home = Path.home()
-    if sys.platform == "win32":
-        base = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
-        return base / "Server-View" / "Logs" / "audit.log"
-    if sys.platform == "darwin":
-        return home / "Library" / "Logs" / "Server-View" / "audit.log"
-    base = Path(os.environ.get("XDG_STATE_HOME") or home / ".local" / "state")
-    return base / "server-view" / "audit.log"
+    return paths.log_dir() / "audit.log"
 
 
 def audit_log_path() -> Path:

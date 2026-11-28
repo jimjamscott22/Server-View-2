@@ -83,3 +83,28 @@ class KillResponse(BaseModel):
     signal: str
     status: str
     message: str
+
+
+# Upper bound on one bulk stop request; the dashboard sends what's selected.
+MAX_BULK_STOP = 25
+
+
+class StopTarget(BaseModel):
+    pid: int
+    started_at: float
+
+
+class BulkStopRequest(BaseModel):
+    targets: list[StopTarget] = Field(min_length=1, max_length=MAX_BULK_STOP)
+
+
+class StopResult(BaseModel):
+    pid: int
+    # "requested": terminate was sent. "failed": see http_status and message.
+    status: Literal["requested", "failed"]
+    http_status: int
+    message: str
+
+
+class BulkStopResponse(BaseModel):
+    results: list[StopResult]

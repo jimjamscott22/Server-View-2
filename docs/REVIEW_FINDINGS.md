@@ -110,29 +110,34 @@ Server-View-2 is a well-architected, cleanly implemented application for monitor
 
 ### 🟡 Medium Priority
 
-#### 5. **Performance Optimization**
-- **Current**: Full process scan on every request
-- **Issue**: Can be slow on systems with many processes
-- **Impact**: Better responsiveness, lower CPU usage
-- **Solution**: Add caching, implement diff-based updates, use async scanning
+#### 5. **Performance Optimization** ✅ **IMPLEMENTED**
+- **Issue**: Every request did a full process scan, which is slow on machines with many processes
+- **Classification cache**: A process rejected as "not a dev server" is remembered by `(pid, start time)`, so later scans skip reading its command line. The verdict is checked again when the process name changes (a launcher that `exec`s a server keeps its PID and start time), after 60 s, or when a bare runtime such as `java` gains a port. With 682 processes, a repeat scan went from ~60 ms to ~17 ms
+- **Shared scan**: REST, the WebSocket broadcast and the history recorder share one scan (`app/snapshot.py`). Concurrent callers wait for a single scan in progress instead of starting their own
+- **Async scanning**: Already done: scans run in worker threads, never on the event loop
+- **Not done: diff-based WebSocket updates.** Uptime and CPU change on nearly every update, so a diff would be almost as large as the full list. Revisit if payloads grow large
+- **Status**: ✅ Implemented
 
-#### 6. **Process History & Logging**
-- **Current**: No historical data
-- **Issue**: Cannot track process lifecycle or resource trends
-- **Impact**: Better debugging, historical analysis
-- **Solution**: Add SQLite database for process history
+#### 6. **Process History & Logging** ✅ **IMPLEMENTED**
+- **Issue**: No way to see process lifecycle or resource trends
+- **Storage**: SQLite (stdlib `sqlite3`) in the per-user data folder. `SERVER_VIEW_HISTORY_DB` overrides the path. Rows are kept for 7 days
+- **Recorded**: A `started` event (at the process's real start time) and a `stopped` event per process, keyed by `(pid, started_at)`. A process that drops off the list but is still running doesn't count as stopped. CPU and memory are sampled every 30 s. A background task records every 5 s and reuses the dashboard's scans when one is open
+- **API**: `GET /api/history/events`, `GET /api/history/samples`. The dashboard has a **Recent activity** panel
+- **Follow-up**: Sparkline charts from `/api/history/samples` (see #11)
+- **Status**: ✅ Implemented
 
-#### 7. **Resource Alerts**
-- **Current**: No proactive notifications
-- **Issue**: Users must manually check for high CPU/memory
-- **Impact**: Proactive monitoring, better user awareness
-- **Solution**: Add configurable thresholds and alert system
+#### 7. **Resource Alerts** ✅ **IMPLEMENTED**
+- **Issue**: Users had to check for high CPU/memory manually
+- **Behavior**: A process alerts after staying over a CPU or memory limit for a set time (default 80% CPU or 1024 MB for 6 s), so short spikes such as a rebuild stay quiet. Timing uses when each measurement arrived, so extra refreshes can't make an alert fire early. Alerts appear in a banner (polite live region) and highlight the row and value
+- **Settings**: Editable in the dashboard and saved in `localStorage`. They can also be turned off
+- **Not done**: Desktop notifications, and alerts while no dashboard is open (for example from the tray)
+- **Status**: ✅ Implemented
 
-#### 8. **Bulk Actions**
-- **Current**: One process at a time
-- **Issue**: Tedious to stop multiple processes
-- **Impact**: Improved productivity
-- **Solution**: Add multi-select and bulk stop functionality
+#### 8. **Bulk Actions** ✅ **IMPLEMENTED**
+- **Issue**: Stopping several processes meant one dialog each
+- **UI**: Row checkboxes plus "select all shown" in the grouped table. Docker port owners can't be selected. A selection bar has **Stop selected**, and a confirmation dialog lists every process and warns about databases. Processes that fail stay in the dialog with their reasons
+- **API**: `POST /api/processes/stop` takes up to 25 `{pid, started_at}` targets; the dashboard splits bigger selections into batches. Each gets the full single-stop checks and its own audit line. The request counts once toward the rate limit
+- **Status**: ✅ Implemented
 
 ### 🟢 Low Priority
 
@@ -209,10 +214,10 @@ Server-View-2 is a well-architected, cleanly implemented application for monitor
 | Metric | Value | Target |
 |--------|-------|--------|
 | Backend startup | ~1-2s | <1s |
-| Process scan | ~50-200ms | <100ms |
+| Process scan | ~17ms repeat scan (682 processes; ~60ms without the cache) | <100ms |
 | API response | ~10-50ms | <20ms |
 | Frontend bundle | ~500KB | <1MB |
-| Polling interval | 2s | Real-time |
+| Update interval | 2s WebSocket push | Real-time |
 | Memory usage | ~50-100MB | <150MB |
 
 ### Bottlenecks
@@ -290,10 +295,10 @@ Server-View-2 is a well-architected, cleanly implemented application for monitor
 4. **✅ Harden the API** - Origin/Host checks, ownership check, rate limiting, audit log ✅ COMPLETED
 
 ### Short-term (Next 1-2 months)
-1. **Performance optimization** - Caching, async scanning, diff-based updates
-2. **Process history** - SQLite logging for historical data
-3. **Resource alerts** - Configurable thresholds and notifications
-4. **Bulk actions** - Multi-select and bulk operations
+1. **✅ Performance optimization** - Classification cache, shared scan ✅ COMPLETED
+2. **✅ Process history** - SQLite start/stop events and resource samples ✅ COMPLETED
+3. **✅ Resource alerts** - Configurable thresholds with sustained-use detection ✅ COMPLETED
+4. **✅ Bulk actions** - Multi-select and bulk stop ✅ COMPLETED
 
 ### Long-term (Next 3-6 months)
 1. **Cross-platform enhancements** - Better Windows/macOS support

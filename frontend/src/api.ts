@@ -1,4 +1,4 @@
-import type { KillResponse, ProcessListResponse } from './types';
+import type { BulkStopResponse, HistoryEvent, KillResponse, ProcessListResponse, StopTarget } from './types';
 
 // WebSocket connection for real-time updates
 let socket: WebSocket | null = null;
@@ -36,6 +36,31 @@ export async function killProcess(pid: number, startedAt: number): Promise<KillR
     throw new Error(await parseError(response));
   }
   return response.json() as Promise<KillResponse>;
+}
+
+/** The agent accepts at most this many processes per bulk stop request (models.MAX_BULK_STOP). */
+export const MAX_BULK_STOP = 25;
+
+/** Stop up to MAX_BULK_STOP processes in one request; each gets its own result. */
+export async function stopProcesses(targets: StopTarget[]): Promise<BulkStopResponse> {
+  const response = await fetch('/api/processes/stop', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targets }),
+  });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  return response.json() as Promise<BulkStopResponse>;
+}
+
+export async function fetchHistoryEvents(limit = 20, signal?: AbortSignal): Promise<HistoryEvent[]> {
+  const response = await fetch(`/api/history/events?limit=${limit}`, { signal });
+  if (!response.ok) {
+    throw new Error(await parseError(response));
+  }
+  const body = (await response.json()) as { events?: unknown };
+  return Array.isArray(body.events) ? (body.events as HistoryEvent[]) : [];
 }
 
 // WebSocket functions

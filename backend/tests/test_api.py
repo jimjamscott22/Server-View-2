@@ -1,7 +1,7 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app import main
+from app import main, scanner
 from app.models import ProcessInfo, ProcessListResponse, ProcessSummary
 from app.scanner import ProcessAccessDenied, ProcessChanged, ProcessNotFound, ProcessNotManaged
 
@@ -57,7 +57,7 @@ async def test_processes_response_shape(monkeypatch) -> None:
         summary = ProcessSummary(process_count=1, total_memory_mb=64.0, active_ports=[5173])
         return ProcessListResponse(processes=processes, summary=summary)
 
-    monkeypatch.setattr(main, "scan_processes", fake_scan_processes)
+    monkeypatch.setattr(scanner, "scan_processes", fake_scan_processes)
 
     response = await request("GET", "/api/processes")
 

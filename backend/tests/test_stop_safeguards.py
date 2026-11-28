@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app import audit, main
+from app import audit, main, paths
 from app.models import ProcessInfo
 from app.scanner import ProcessNotFound, ProcessNotOwned
 from app.security import StopRateLimiter, stop_rate_limiter
@@ -176,7 +176,7 @@ def test_stop_still_works_when_audit_log_cannot_be_written(
 def test_default_audit_log_path_per_platform(
     monkeypatch: pytest.MonkeyPatch, platform: str, env: dict, expected_tail: tuple[str, ...]
 ) -> None:
-    monkeypatch.setattr(audit.sys, "platform", platform)
+    monkeypatch.setattr(paths.sys, "platform", platform)
     for name in ("XDG_STATE_HOME", "LOCALAPPDATA"):
         monkeypatch.delenv(name, raising=False)
     for name, value in env.items():
@@ -185,3 +185,70 @@ def test_default_audit_log_path_per_platform(
     path = audit.default_audit_log_path()
 
     assert path.parts[-len(expected_tail):] == expected_tail
+
+
+def bulk_stop(client: TestClient, targets: list[dict], headers: dict | None = None):
+    return client.post(
+        "/api/processes/stop",
+        json={"targets": targets},
+        headers=DASHBOARD_HEADERS if headers is None else headers,
+    )
+
+
+def test_bulk_stop_reports_each_process(client: TestClient, monkeypatch: pytest.MonkeyPatch, audit_log: Path) -> None:
+    def fake_terminate(pid: int, started_at: float) -> ProcessInfo:
+        if pid == 2:
+            raise ProcessNotOwned("Process 2 belongs to another user. Server-View only stops your own processes.")
+        return fake_info(pid)
+
+    monkeypatch.setattr(main, "terminate_process", fake_terminate)
+
+    response = bulk_stop(client, [{"pid": 1, "started_at": 1.0}, {"pid": 2, "started_at": 2.0}, {"pid": 3, "started_at": 3.0}])
+
+    assert response.status_code == 200
+    results = response.json()["results"]
+    assert [(r["pid"], r["status"], r["http_status"]) for r in results] == [
+        (1, "requested", 200),
+        (2, "failed", 403),
+        (3, "requested", 200),
+    ]
+    assert "belongs to another user" in results[1]["message"]
+    # One audit line per process, so the log reads the same as single stops.
+    assert [(e["pid"], e["outcome"]) for e in read_audit(audit_log)] == [
+        (1, "requested"),
+        (2, "not_owned"),
+        (3, "requested"),
+    ]
+
+
+def test_bulk_stop_counts_once_toward_rate_limit(client: TestClient, terminate_calls: list[int]) -> None:
+    targets = [{"pid": pid, "started_at": 1.0} for pid in range(1, 21)]
+
+    assert bulk_stop(client, targets).status_code == 200
+    assert len(terminate_calls) == 20
+    # Plenty of budget left for single stops.
+    assert stop(client).status_code == 200
+
+
+def test_bulk_stop_skips_duplicate_pids(client: TestClient, terminate_calls: list[int]) -> None:
+    response = bulk_stop(client, [{"pid": 5, "started_at": 1.0}, {"pid": 5, "started_at": 1.0}])
+
+    assert [r["pid"] for r in response.json()["results"]] == [5]
+    assert terminate_calls == [5]
+
+
+@pytest.mark.parametrize("count", [0, 26])
+def test_bulk_stop_rejects_empty_or_oversized_requests(
+    client: TestClient, terminate_calls: list[int], count: int
+) -> None:
+    targets = [{"pid": pid, "started_at": 1.0} for pid in range(1, count + 1)]
+
+    assert bulk_stop(client, targets).status_code == 422
+    assert terminate_calls == []
+
+
+def test_bulk_stop_requires_dashboard_origin(client: TestClient, terminate_calls: list[int]) -> None:
+    response = bulk_stop(client, [{"pid": 1, "started_at": 1.0}], headers={"Origin": "https://evil.example"})
+
+    assert response.status_code == 403
+    assert terminate_calls == []
